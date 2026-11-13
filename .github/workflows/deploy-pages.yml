@@ -1,0 +1,82 @@
+# Manual GitHub Pages deployment.
+#
+# Deliberately NOT triggered by push. The visual work churns constantly and a
+# deploy on every commit would publish broken intermediate states (and burn
+# the Pages build quota). Deploys happen only when a human decides the world
+# is worth showing:
+#
+#   GitHub UI  -> Actions -> "Deploy to GitHub Pages" -> Run workflow
+#                 (pick a branch; `main` builds from the checked-out code)
+#   CLI        -> gh workflow run deploy-pages.yml --ref main
+#
+# One job, no build matrix, no environments beyond the Pages environment that
+# GitHub requires. If you want a one-command local publish instead, see
+# scripts/deploy-pages.sh.
+
+name: Deploy to GitHub Pages
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch or tag to build and publish"
+        required: false
+        default: "main"
+        type: string
+
+# GITHUB_TOKEN needs write access to publish, and Pages deployments must not
+# race each other.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deploy, queued rather than cancelled — cancelling a
+# Pages deployment mid-upload leaves the site in a mixed state.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build static site
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || 'main' }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # Pages serves whatever is uploaded; it does not run a build. Upload the
+      # built directory as the site artifact.
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    name: Publish to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
