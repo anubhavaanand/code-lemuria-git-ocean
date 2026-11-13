@@ -1,0 +1,1075 @@
+/* ==========================================================================
+   Git Ocean — global styles
+
+   The HUD is glass over water: barely-there panels, thin rules, one accent.
+   It should never compete with the scene. Bruno Simon's portfolio is the
+   benchmark — the interface is a whisper, the world does the talking.
+   ========================================================================== */
+
+:root {
+  /* Water */
+  --go-abyss: #00060f;
+  --go-deep: #00203a;
+  --go-mid: #003a5c;
+
+  /* Ink */
+  --go-ink: #e8f4fb;
+  --go-ink-dim: #9fb8c9;
+  --go-ink-faint: #64809a;
+
+  /* Bioluminescence */
+  --go-cyan: #35e0ff;
+  --go-blue: #2a7fff;
+  --go-green: #4dffb0;
+  --go-gold: #ffd479;
+  --go-violet: #9b6bff;
+
+  /* Semantic */
+  --go-ok: #4dffb0;
+  --go-bad: #ff5a5a;
+  --go-run: #ffd479;
+  --go-dim: #64809a;
+
+  /* Glass */
+  --go-panel: rgba(6, 22, 38, 0.72);
+  --go-panel-solid: rgba(5, 18, 32, 0.92);
+  --go-edge: rgba(120, 190, 230, 0.14);
+  --go-edge-strong: rgba(120, 200, 240, 0.3);
+
+  --go-radius: 12px;
+  --go-radius-sm: 8px;
+
+  --go-font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --go-mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+
+  --go-shadow: 0 18px 48px rgba(0, 4, 10, 0.55);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--go-abyss);
+  color: var(--go-ink);
+  font-family: var(--go-font);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+canvas {
+  display: block;
+}
+
+kbd {
+  font-family: var(--go-mono);
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--go-edge-strong);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--go-ink-dim);
+}
+
+/* ==========================================================================
+   Root
+   ========================================================================== */
+
+.go-root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.go-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  cursor: grab;
+}
+
+.go-canvas:active {
+  cursor: grabbing;
+}
+
+/* ==========================================================================
+   HUD shell
+   ========================================================================== */
+
+.go-hud {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Any interactive child re-enables pointer events. Doing this per-child
+   (rather than on .go-hud) is what lets clicks pass through to the canvas
+   everywhere else — critical for an explorable scene. */
+.go-hud button,
+.go-hud a,
+.go-hud .go-card,
+.go-hud .go-legend,
+.go-hud .go-zoomrail,
+.go-hud .go-depthpanel {
+  pointer-events: auto;
+}
+
+/* ==========================================================================
+   Top bar
+   ========================================================================== */
+
+.go-topbar {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 16px 20px;
+  background: linear-gradient(
+    180deg,
+    rgba(2, 10, 20, 0.82) 0%,
+    rgba(2, 10, 20, 0.45) 65%,
+    rgba(2, 10, 20, 0) 100%
+  );
+  pointer-events: none;
+}
+
+.go-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.go-brand-mark {
+  color: var(--go-cyan);
+  font-size: 19px;
+  line-height: 1;
+  text-shadow: 0 0 14px rgba(53, 224, 255, 0.65);
+}
+
+.go-brand-text {
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--go-ink);
+}
+
+.go-brand-text span {
+  color: var(--go-cyan);
+  font-weight: 400;
+}
+
+.go-identity {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+  padding-left: 20px;
+  border-left: 1px solid var(--go-edge);
+}
+
+.go-identity strong {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--go-ink);
+}
+
+.go-identity-sub {
+  font-size: 11.5px;
+  color: var(--go-ink-faint);
+  letter-spacing: 0.01em;
+}
+
+.go-topright {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.go-tally {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 11.5px;
+  color: var(--go-ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.go-tally b {
+  color: var(--go-ink-dim);
+  font-weight: 600;
+}
+
+/* Language tally: colour chips + a count, never the raw object list */
+.go-tally-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.go-tally-label {
+  color: var(--go-ink-faint);
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+}
+
+.go-lang-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.go-lang-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--go-ink-dim);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.go-lang-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  box-shadow: 0 0 6px currentColor;
+  flex: none;
+}
+
+.go-lang-more {
+  color: var(--go-ink-faint);
+  font-weight: 600;
+}
+
+/* ==========================================================================
+   Buttons
+   ========================================================================== */
+
+.go-btn {
+  appearance: none;
+  border: 1px solid var(--go-edge-strong);
+  background: rgba(53, 224, 255, 0.09);
+  color: var(--go-ink);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  padding: 7px 13px;
+  border-radius: var(--go-radius-sm);
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background 140ms ease, border-color 140ms ease,
+    transform 140ms ease;
+}
+
+.go-btn:hover {
+  background: rgba(53, 224, 255, 0.18);
+  border-color: rgba(53, 224, 255, 0.55);
+}
+
+.go-btn:active {
+  transform: translateY(1px);
+}
+
+.go-btn.is-ghost {
+  background: transparent;
+  border-color: var(--go-edge);
+  color: var(--go-ink-dim);
+}
+
+.go-btn.is-ghost:hover,
+.go-btn.is-ghost.is-on {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--go-ink);
+  border-color: var(--go-edge-strong);
+}
+
+.go-icon-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--go-ink-faint);
+  font-size: 14px;
+  line-height: 1;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 130ms ease, color 130ms ease;
+}
+
+.go-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--go-ink);
+}
+
+/* ==========================================================================
+   Left stack — depth gauge
+   ========================================================================== */
+
+.go-leftstack {
+  position: absolute;
+  left: 20px;
+  top: 92px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.go-depthpanel {
+  width: 128px;
+  padding: 13px 14px 12px;
+  background: var(--go-panel);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  border: 1px solid var(--go-edge);
+  border-radius: var(--go-radius);
+  box-shadow: var(--go-shadow);
+}
+
+.go-depth-label {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--go-ink-faint);
+  margin-bottom: 3px;
+}
+
+.go-depth-value {
+  font-size: 21px;
+  font-weight: 300;
+  font-variant-numeric: tabular-nums;
+  color: var(--go-cyan);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  text-shadow: 0 0 18px rgba(53, 224, 255, 0.35);
+}
+
+.go-depth-zone {
+  font-size: 10.5px;
+  color: var(--go-ink-dim);
+  margin-top: 1px;
+}
+
+.go-depth-bar {
+  position: relative;
+  width: 3px;
+  height: 72px;
+  margin: 11px auto 6px;
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 2px;
+  overflow: hidden;
+  display: flex;
+  align-items: flex-end;
+}
+
+.go-depth-fill {
+  width: 100%;
+  background: linear-gradient(180deg, var(--go-cyan), var(--go-blue) 55%, var(--go-violet));
+  border-radius: 2px;
+  box-shadow: 0 0 10px rgba(53, 224, 255, 0.55);
+  transition: height 400ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.go-depth-scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 8.5px;
+  color: var(--go-ink-faint);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+/* ==========================================================================
+   Zoom rail — bottom centre
+   ========================================================================== */
+
+.go-zoomrail {
+  position: absolute;
+  left: 50%;
+  bottom: 26px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 5px;
+  background: var(--go-panel);
+  backdrop-filter: blur(16px) saturate(1.25);
+  -webkit-backdrop-filter: blur(16px) saturate(1.25);
+  border: 1px solid var(--go-edge);
+  border-radius: 999px;
+  box-shadow: var(--go-shadow);
+}
+
+.go-zoom-step {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--go-ink-faint);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.015em;
+  padding: 7px 14px 7px 11px;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  position: relative;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.go-zoom-step:hover {
+  color: var(--go-ink);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.go-zoom-step.is-active {
+  color: var(--go-abyss);
+  background: var(--go-cyan);
+  font-weight: 650;
+  box-shadow: 0 0 20px rgba(53, 224, 255, 0.45);
+}
+
+.go-zoom-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.55;
+  flex: none;
+}
+
+.go-zoom-step.is-active .go-zoom-dot {
+  opacity: 1;
+  box-shadow: 0 0 8px rgba(0, 20, 30, 0.6);
+}
+
+.go-zoom-key {
+  font-family: var(--go-mono);
+  font-size: 9px;
+  opacity: 0.45;
+  padding-left: 1px;
+}
+
+.go-zoom-step.is-active .go-zoom-key {
+  opacity: 0.6;
+}
+
+/* ==========================================================================
+   Repo card — right
+   ========================================================================== */
+
+.go-card {
+  position: absolute;
+  right: 20px;
+  top: 88px;
+  bottom: 96px;
+  width: 372px;
+  max-width: calc(100vw - 40px);
+  display: flex;
+  flex-direction: column;
+  padding: 18px 18px 14px;
+  background: var(--go-panel-solid);
+  backdrop-filter: blur(22px) saturate(1.3);
+  -webkit-backdrop-filter: blur(22px) saturate(1.3);
+  border: 1px solid var(--go-edge);
+  border-radius: var(--go-radius);
+  box-shadow: var(--go-shadow);
+  overflow: hidden;
+  animation: go-slide-in 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes go-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.go-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.go-card-owner {
+  font-size: 11px;
+  color: var(--go-ink-faint);
+  letter-spacing: 0.02em;
+}
+
+.go-card-title {
+  margin: 1px 0 0;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--go-ink);
+  line-height: 1.2;
+  word-break: break-word;
+}
+
+.go-card-head .go-icon-btn {
+  margin-left: auto;
+  flex: none;
+}
+
+.go-card-desc {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--go-ink-dim);
+}
+
+.go-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0 0;
+}
+
+.go-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  letter-spacing: 0.01em;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--go-edge);
+  color: var(--go-ink-dim);
+}
+
+.go-chip.is-warn {
+  color: var(--go-run);
+  border-color: rgba(255, 212, 121, 0.28);
+  background: rgba(255, 212, 121, 0.08);
+}
+
+.go-swatch {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+  box-shadow: 0 0 6px currentColor;
+}
+
+.go-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+/* Tabs */
+.go-tabs {
+  display: flex;
+  gap: 2px;
+  margin: 14px 0 12px;
+  border-bottom: 1px solid var(--go-edge);
+}
+
+.go-tab {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--go-ink-faint);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  text-transform: capitalize;
+  padding: 6px 11px 8px;
+  cursor: pointer;
+  border-bottom: 1.5px solid transparent;
+  margin-bottom: -1px;
+  transition: color 140ms ease, border-color 140ms ease;
+}
+
+.go-tab:hover {
+  color: var(--go-ink-dim);
+}
+
+.go-tab.is-active {
+  color: var(--go-cyan);
+  border-bottom-color: var(--go-cyan);
+}
+
+/* Card body scrolls; head/tabs/foot stay put */
+.go-card > *:not(.go-card-head):not(.go-tabs):not(.go-card-foot) {
+  min-height: 0;
+}
+
+.go-stats,
+.go-bars,
+.go-mapping,
+.go-raw {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.go-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--go-edge);
+  border: 1px solid var(--go-edge);
+  border-radius: var(--go-radius-sm);
+  overflow: hidden;
+  flex: none;
+}
+
+.go-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 8px 9px;
+  background: rgba(3, 13, 24, 0.72);
+}
+
+.go-stat-value {
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--go-ink);
+  letter-spacing: -0.01em;
+}
+
+.go-stat-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--go-ink-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.go-bars {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  flex: none;
+}
+
+.go-bar-row {
+  display: grid;
+  grid-template-columns: 74px 1fr 42px;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+  color: var(--go-ink-faint);
+}
+
+.go-bar-row b {
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--go-ink-dim);
+  font-size: 10.5px;
+}
+
+.go-bar {
+  height: 3px;
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.go-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.go-species {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: var(--go-radius-sm);
+  background: rgba(53, 224, 255, 0.05);
+  border: 1px solid var(--go-edge);
+  flex: none;
+}
+
+.go-species-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--go-ink);
+}
+
+.go-species-latin {
+  font-size: 11px;
+  font-style: italic;
+  color: var(--go-cyan);
+  opacity: 0.8;
+  margin-top: 1px;
+}
+
+.go-species-traits {
+  font-size: 10.5px;
+  color: var(--go-ink-faint);
+  margin-top: 5px;
+  line-height: 1.45;
+}
+
+/* Creature mapping list */
+.go-mapping {
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--go-ink-dim);
+  flex: 1;
+}
+
+.go-mapping ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.go-mapping li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 0;
+  border-bottom: 1px dashed rgba(120, 190, 230, 0.09);
+}
+
+.go-mapping li:last-child {
+  border-bottom: none;
+}
+
+.go-mapping b {
+  color: var(--go-ink);
+  font-weight: 500;
+}
+
+.go-hint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--go-ink-faint);
+  margin: 0 0 8px;
+}
+
+/* Raw JSON */
+.go-raw {
+  flex: 1;
+  margin: 0;
+  padding: 10px 12px;
+  background: rgba(0, 6, 14, 0.6);
+  border: 1px solid var(--go-edge);
+  border-radius: var(--go-radius-sm);
+  font-family: var(--go-mono);
+  font-size: 10px;
+  line-height: 1.55;
+  color: #9fd8c8;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Footer */
+.go-card-foot {
+  display: flex;
+  gap: 8px;
+  padding-top: 12px;
+  margin-top: 10px;
+  border-top: 1px solid var(--go-edge);
+  flex: none;
+}
+
+.go-card-foot .go-btn {
+  flex: 1;
+  justify-content: center;
+}
+
+/* ==========================================================================
+   Legend
+   ========================================================================== */
+
+.go-legend {
+  position: absolute;
+  right: 20px;
+  top: 88px;
+  width: 268px;
+  padding: 14px 15px 12px;
+  background: var(--go-panel-solid);
+  backdrop-filter: blur(22px) saturate(1.3);
+  -webkit-backdrop-filter: blur(22px) saturate(1.3);
+  border: 1px solid var(--go-edge);
+  border-radius: var(--go-radius);
+  box-shadow: var(--go-shadow);
+  animation: go-slide-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.go-legend header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.go-legend h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--go-ink);
+}
+
+.go-legend .go-icon-btn {
+  margin-left: auto;
+}
+
+.go-legend ul {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+}
+
+.go-legend li {
+  display: grid;
+  grid-template-columns: 12px 1fr;
+  grid-template-rows: auto auto;
+  gap: 0 9px;
+  padding: 5px 0;
+  align-items: center;
+}
+
+.go-legend-swatch {
+  grid-row: 1 / span 2;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  display: block;
+}
+
+.go-legend-name {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--go-ink);
+  line-height: 1.25;
+}
+
+.go-legend-meaning {
+  font-size: 10px;
+  color: var(--go-ink-faint);
+  line-height: 1.3;
+}
+
+/* ==========================================================================
+   Bottom hint bar
+   ========================================================================== */
+
+.go-hintbar {
+  position: absolute;
+  left: 20px;
+  bottom: 30px;
+  font-size: 11px;
+  color: var(--go-ink-faint);
+  letter-spacing: 0.01em;
+  max-width: 340px;
+  line-height: 1.7;
+  pointer-events: none;
+  text-shadow: 0 1px 6px rgba(0, 4, 10, 0.9);
+}
+
+/* ==========================================================================
+   Loading + error
+   ========================================================================== */
+
+.go-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: var(--go-abyss);
+  transition: opacity 400ms ease;
+}
+
+.go-loading-mark {
+  font-size: 34px;
+  color: var(--go-cyan);
+  animation: go-pulse 1.8s ease-in-out infinite;
+  text-shadow: 0 0 30px rgba(53, 224, 255, 0.7);
+}
+
+@keyframes go-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.94);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+}
+
+.go-loading-text {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  color: var(--go-ink-faint);
+}
+
+.go-error {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 40px;
+  text-align: center;
+  background: var(--go-abyss);
+}
+
+.go-error h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--go-bad);
+}
+
+.go-error p {
+  margin: 0;
+  max-width: 460px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--go-ink-dim);
+}
+
+.go-ready {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  pointer-events: none;
+  box-shadow: inset 0 0 160px 20px rgba(0, 10, 22, 0.55);
+}
+
+/* ==========================================================================
+   Responsive — collapse the chrome, keep the ocean
+   ========================================================================== */
+
+@media (max-width: 1080px) {
+  .go-card {
+    width: 330px;
+  }
+  .go-tally {
+    display: none;
+  }
+}
+
+@media (max-width: 820px) {
+  .go-topbar {
+    padding: 12px 14px;
+    gap: 12px;
+  }
+  .go-brand-text {
+    font-size: 14px;
+  }
+  .go-identity {
+    display: none;
+  }
+  .go-leftstack {
+    left: 12px;
+    top: 74px;
+  }
+  .go-depthpanel {
+    width: 104px;
+    padding: 10px 11px;
+  }
+  .go-depth-value {
+    font-size: 17px;
+  }
+  .go-card {
+    left: 12px;
+    right: 12px;
+    top: auto;
+    bottom: 78px;
+    width: auto;
+    max-height: 54vh;
+  }
+  .go-legend {
+    left: 12px;
+    right: 12px;
+    top: auto;
+    bottom: 78px;
+    width: auto;
+    max-height: 54vh;
+    overflow-y: auto;
+  }
+  .go-zoomrail {
+    bottom: 14px;
+    gap: 0;
+    padding: 4px;
+  }
+  .go-zoom-step {
+    padding: 6px 9px;
+    font-size: 10px;
+    gap: 4px;
+  }
+  .go-zoom-key {
+    display: none;
+  }
+  .go-hintbar {
+    display: none;
+  }
+  .go-stats {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 520px) {
+  .go-zoom-label {
+    display: none;
+  }
+  .go-zoom-step {
+    padding: 7px 11px;
+  }
+  .go-zoom-dot {
+    width: 7px;
+    height: 7px;
+  }
+}
+
+/* Respect reduced-motion: stop the pulsing, keep the function */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
