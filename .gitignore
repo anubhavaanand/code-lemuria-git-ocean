@@ -1,0 +1,39 @@
+# Dependencies
+node_modules
+.pnpm-store
+
+# Build output
+dist
+dist-ssr
+.output
+
+# Environment — never commit real credentials
+.env
+.env.local
+.env.*.local
+.dev.vars
+
+# Cloudflare / wrangler local state
+.wrangler
+.mf
+worker-configuration.d.ts
+
+# Logs
+*.log
+npm-debug.log*
+logs
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.idea
+*.swp
+*.swo
+*~
+
+# Local scratch — design chat exports, firecrawl captures, speckit tooling
+context/
+.firecrawl/
+.dsh/
+.specify/
+.directory
