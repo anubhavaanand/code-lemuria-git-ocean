@@ -783,7 +783,11 @@ export default function App() {
                 nodes,
               };
             });
-        } else {
+        } else if (instance.floor) {
+          // Guarded: `?only=whale` skips the seafloor entirely, so there is no
+          // floor to report on. Unguarded this threw inside the census interval
+          // and the report node came back empty — which reads exactly like a
+          // world that failed to build, and cost a capture to diagnose.
           payload.rocks = instance.floor.rockReport(
             instance.camera,
             el.clientWidth,

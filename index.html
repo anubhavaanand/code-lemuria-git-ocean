@@ -5,8 +5,41 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Git Ocean — Your GitHub as an Underwater 3D World</title>
     <meta name="description" content="Visualize your GitHub repositories as an underwater world — repos become whales, commit history becomes kelp towers, stars become bioluminescent admirers" />
+
+    <!--
+      Fonts. The CSS asked for Inter and JetBrains Mono from the first commit and
+      nothing ever loaded them, so every screenshot in this project was taken
+      with the platform fallback — which is why the type never looked the way the
+      design intended. Inter is the neutral grotesque the whole UI is set in, and
+      JetBrains Mono carries the numeric readouts where digits must not shift
+      width between frames.
+
+      Loaded from a CDN with preconnect rather than self-hosted: two woff2
+      families would add ~200 KB to the repo, and the display swap keeps text
+      visible while they arrive.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+
+    <!--
+      Critical inline style. It must agree with the token block in src/index.css:
+      this is what paints before the bundle arrives, and a mismatch means the
+      first frame is a different colour and a different typeface than the app.
+      It used to say #001122 against a --go-abyss of #00060f.
+    -->
     <style>
-      body { margin: 0; overflow: hidden; background: #001122; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+      html { background: #00060f; }
+      body {
+        margin: 0;
+        overflow: hidden;
+        background: #00060f;
+        font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+      }
       #root { width: 100vw; height: 100vh; display: block; }
     </style>
   </head>

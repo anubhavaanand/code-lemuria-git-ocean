@@ -779,8 +779,33 @@ export class OceanWorld {
       // --- Legacy fauna ---
       // These ride on the tower groups, so they inherit every tower transform
       // for free and need no world-space bookkeeping of their own.
+      //
+      // Distance-culled, which the header of this file claimed and the code
+      // never did. Measured: 657 of the city zoom's 728 draw calls belong to
+      // the non-whale scene, and the fauna are a large share of that. A colony
+      // 3,000 units away in the fog cannot be seen, yet still rewrites every
+      // instance matrix it owns, every frame.
+      //
+      // Both the CPU update and the draw are skipped — hiding the group would
+      // stop the draw but keep the cost of the update, which is the half that
+      // scales with creature count.
+      const cull2 = this.drawDistance * this.drawDistance;
+      const cam = this.camera.position;
       for (let i = 0; i < this.legacy.length; i++) {
-        this.legacy[i].update(delta);
+        const l = this.legacy[i];
+        // The colony's group is parented to the tower, so the tower's position
+        // is the world position; the colony's own is a local offset.
+        const holder = l.group.parent;
+        const p = holder ? holder.position : l.group.position;
+        const dx = p.x - cam.x;
+        const dz = p.z - cam.z;
+        const far = dx * dx + dz * dz > cull2;
+        // Toggle visibility only when it changes: writing `visible` every frame
+        // dirties the object and makes three re-sort the render list for
+        // nothing.
+        if (l.group.visible === far) l.group.visible = !far;
+        if (far) continue;
+        l.update(delta);
       }
 
       // --- Whales: circle their tower, trailing their orbital cloud ---
