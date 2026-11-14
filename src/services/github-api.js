@@ -99,16 +99,35 @@ export function getOAuthUrl() {
  * Check if the user is authenticated (has a stored access token).
  */
 export function isAuthenticated() {
-  if (typeof window === "undefined") return false;
-  return !!localStorage.getItem("git-ocean:token");
+  // `globalThis.localStorage`, not `window.localStorage`, and the guard is on the
+  // global rather than on `window`.
+  //
+  // Both details are load-bearing. The transport choice reads this function, so
+  // in a non-browser context — a test, a worker, a build step — a check that only
+  // looks at `window` answers false and sends the caller down the anonymous REST
+  // path even when a token was deliberately installed. That failure is silent and
+  // looks like a code defect in whatever is being tested.
+  if (typeof globalThis === "undefined") return false;
+  try {
+    return !!globalThis.localStorage?.getItem("git-ocean:token");
+  } catch {
+    // A blocked or unavailable storage (private mode, a sandboxed iframe) is not
+    // a reason to crash the load: treat it as signed out, which is the state the
+    // world is already able to draw.
+    return false;
+  }
 }
 
 /**
  * Get the stored GitHub access token.
  */
 export function getToken() {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem("git-ocean:token");
+  if (typeof globalThis === "undefined") return null;
+  try {
+    return globalThis.localStorage?.getItem("git-ocean:token") || null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -528,7 +547,11 @@ export function transformRepoData(data, owner) {
     // estimate rather than passed off as a measurement.
     commitFrequency: daysSinceUpdate > 0 ? Math.max(1, Math.round(10 / (daysSinceUpdate + 1))) : 10,
     commitStreak: 0, // Needs commit stats
-    codebaseSize: r.diskUsage ? Math.round(r.diskUsage / 1024) : 0, // KB
+    // KB, not bytes. GitHub's `size` and GraphQL's `diskUsage` are both
+    // kilobytes already, and dividing here made a 153 MB repository report as
+    // 150 — which the enrichment pass then overwrote with the correct 153387,
+    // so the number changed depending on which pass you looked at.
+    codebaseSize: r.diskUsage || 0,
     fileCount: 0, // Not directly available
     dependenciesCount: 0, // Not directly available
     isArchived: r.isArchived || false,
@@ -668,13 +691,132 @@ export async function fetchViewerAndRepos() {
  * @returns Array of normalized repo objects (null for failures)
  */
 export async function fetchRepositories(repos) {
-  const results = await Promise.allSettled(
-    repos.map(({ owner, name }) => fetchRepository(owner, name))
-  );
+  // **Sequential, not Promise.all.**
+  //
+  // This used to fire every repository at once, which is fine against the
+  // GraphQL limit when signed in (5,000 points an hour) and fatal when not.
+  // Anonymous GraphQL is **0 points** — every anonymous query returns 403 with
+  // "API rate limit exceeded" and the world falls back to mock data, every time,
+  // with nothing in the console but a stack of identical failures.
+  //
+  // So the anonymous path goes through REST instead, where the anonymous limit is
+  // 60 an hour and a repository costs one request. Signed in, it still uses
+  // GraphQL: one request per repository, richer, and free.
+  //
+  // Sequential because a burst of four anonymous calls is the shape of a request
+  // that gets the whole IP throttled for an hour. A profile of eight repositories
+  // costs eight seconds worst case, once, behind a world that is already drawn.
+  const out = [];
+  for (const { owner, name } of repos) {
+    // eslint-disable-next-line no-await-in-loop
+    const record = isAuthenticated()
+      ? await fetchRepository(owner, name)
+      : await fetchRepositoryRest(owner, name);
+    out.push(record);
+  }
+  return out;
+}
 
-  return results.map((result) =>
-    result.status === "fulfilled" ? result.value : null
-  );
+/**
+ * One repository, from REST, with no token.
+ *
+ * The shape matches `transformRepoData` closely enough that `apiToWorldRepo` and
+ * the enrichment fold read either one, because the alternative is a second
+ * adapter and a second set of field names to keep in step.
+ *
+ * What REST cannot give here is left absent rather than guessed: open/closed
+ * issue counts (REST's `open_issues_count` includes pull requests, so it cannot
+ * be split), the language breakdown, the topic list and the release list. Those
+ * arrive with the enrichment pass or not at all, and the world is built to treat
+ * an absent field as absent.
+ */
+export async function fetchRepositoryRest(owner, name) {
+  const cacheKey = `restrepo:${owner}/${name}`;
+  if (cache.has(cacheKey)) return cache.get(cacheKey);
+
+  const res = await fetch(`${GITHUB_REST_URL}/repos/${owner}/${name}`, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      "User-Agent": "git-ocean",
+    },
+  });
+
+  if (!res.ok) {
+    // 403 here is the rate limit, and it is the one failure worth being loud
+    // about: it looks identical to "this repository does not exist" from the
+    // caller's point of view, and only one of those is worth retrying.
+    console.warn(`REST repository ${owner}/${name} -> ${res.status}`);
+    return null;
+  }
+
+  const r = await res.json();
+  // Checked here rather than after the transform: `transformRepoData` also
+  // returns null for a missing repository, and reporting a 200 as "not there"
+  // sends a reader looking for a network problem that did not happen.
+  if (!r || !r.name) {
+    console.warn(`REST repository ${owner}/${name} -> 200 with no body`);
+    return null;
+  }
+
+  // `transformRepoData` reads a GraphQL repository node. These are the fields it
+  // asks for that REST answers under a different name, mapped once here so the
+  // transform stays the single place that knows what a repository means.
+  const node = {
+    name: r.name,
+    description: r.description,
+    url: r.html_url,
+    isPrivate: !!r.private,
+    isArchived: !!r.archived,
+    isFork: !!r.fork,
+    isTemplate: !!r.is_template,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    pushedAt: r.pushed_at,
+    diskUsage: r.size, // REST reports KB directly; GraphQL's diskUsage is KB too
+    homepageUrl: r.homepage,
+    stargazerCount: r.stargazers_count,
+    watchers: { totalCount: r.watchers_count ?? r.subscribers_count ?? 0 },
+    forkCount: r.forks_count,
+    openIssues: { totalCount: r.open_issues_count || 0 },
+    closedIssues: { totalCount: 0 },
+    primaryLanguage: r.language ? { name: r.language } : null,
+    languages: { edges: [] },
+    licenseInfo: r.license
+      ? { key: r.license.spdx_id || r.license.key || "other" }
+      : null,
+    repositoryTopics: { nodes: (r.topics || []).map((t) => ({ topic: { name: t } })) },
+    hasWikiEnabled: !!r.has_wiki,
+    hasIssuesEnabled: !!r.has_issues,
+    hasProjectsEnabled: !!r.has_projects,
+    hasDiscussionsEnabled: !!r.has_discussions,
+    hasVulnerabilityAlertsEnabled: false, // REST exposes this only with a token
+    discussions: { totalCount: 0 },
+    codeOfConduct: null,
+    contributingGuidelines: null,
+    issueTemplates: [],
+    pullRequestTemplates: [],
+    releases: { totalCount: 0, nodes: [] },
+    defaultBranchRef: r.default_branch
+      ? { name: r.default_branch, target: { history: { totalCount: 0 } } }
+      : null,
+    // REST is authoritative for these two, and the GraphQL query cannot express
+    // them at all.
+    restHasDownloads: !!r.has_downloads,
+    restHasPages: !!r.has_pages,
+  };
+
+  const record = transformRepoData({ repository: node }, owner);
+  if (!record) return null;
+
+  // The first query cannot answer these; REST just did. Stamped on the record so
+  // the adapter reads them from the same place whatever the source.
+  record.hasDownloadsEnabled = !!r.has_downloads;
+  record.hasPages = !!r.has_pages;
+  record.owner = owner;
+  record.source = "rest";
+
+  cache.set(cacheKey, record, "STATIC");
+  return record;
 }
 
 /**

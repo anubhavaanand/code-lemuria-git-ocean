@@ -121,8 +121,36 @@ function mockGithub(byName, opts = {}) {
   return calls;
 }
 
+/**
+ * These run in Node, so there is no `localStorage`.
+ *
+ * `fetchRepositories` chooses its transport by token — GraphQL when signed in,
+ * REST when not, because anonymous GraphQL is limited to 0 points an hour and
+ * every unauthenticated query 403s. Without a token these tests took the REST
+ * path and got the fixture's fallback settings body back, which reads exactly
+ * like a code defect. So the token is stubbed: a global object, installed before
+ * the module under test is imported, with nothing on it but the one key the auth
+ * helper reads.
+ *
+ * The tokenless path has its own tests in tests/anonymous.test.js.
+ */
 beforeEach(() => {
   __clearCacheForTests();
+  globalThis.localStorage = {
+    store: { "git-ocean:token": "test-token" },
+    getItem(k) {
+      return Object.prototype.hasOwnProperty.call(this.store, k) ? this.store[k] : null;
+    },
+    setItem(k, v) {
+      this.store[k] = String(v);
+    },
+    removeItem(k) {
+      delete this.store[k];
+    },
+    clear() {
+      this.store = {};
+    },
+  };
 });
 
 describe("estimateEnrichCost", () => {
@@ -155,7 +183,15 @@ describe("loadProfile", () => {
     expect(stages[0]).toBe(STAGE.FIRST_PASS);
     expect(stages).toContain(STAGE.READY);
     expect(stages).not.toContain(STAGE.ENRICHING);
-    // And it must not have spent a single REST request.
+    // And it must not have run the slow pass: one call per repository, and that
+    // call was GraphQL.
+    //
+    // It is not zero REST calls, and this assertion used to be. The anonymous
+    // transport (anonymous GraphQL is 0 points an hour) is what makes the
+    // tokenless path work at all, so an assertion that no REST request happens
+    // is an assertion that the anonymous path is broken. One `/repos/...` request
+    // per repository is the cost of loading a profile without signing in.
+    expect(calls.graphql).toBe(1);
     expect(calls.rest.length).toBe(0);
   });
 
