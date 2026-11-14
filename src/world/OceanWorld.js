@@ -171,6 +171,20 @@ export class OceanWorld {
     this.renderer.shadowMap.enabled = this.quality !== "low";
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
+    // Record which renderer actually got the context. A perf number measured
+    // under a software rasteriser (which is what headless Chrome uses) says
+    // nothing about real hardware, and the whole point of the profiler is to
+    // make claims checkable rather than asserted.
+    try {
+      const gl = this.renderer.getContext();
+      const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+      this.rendererName = dbg
+        ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)
+        : gl.getParameter(gl.RENDERER);
+    } catch (e) {
+      this.rendererName = "unknown";
+    }
+
     const el = this.renderer.domElement;
     el.style.display = "block";
     el.style.width = "100%";

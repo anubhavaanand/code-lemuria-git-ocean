@@ -798,6 +798,10 @@ export default function App() {
         // an ordinary census costs one property read.
         if (wantsPerfReport) {
           payload.perf = instance.profiler.report();
+          // Without the renderer name a frame rate is unreadable: software
+          // rasterisation and a real GPU differ by an order of magnitude, and
+          // only one of them is the user's experience.
+          payload.renderer = instance.rendererName || "unknown";
           // What the renderer actually drew, for the same frame.
           payload.render = {
             calls: instance.renderer.info.render.calls,
