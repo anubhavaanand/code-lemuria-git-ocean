@@ -75,6 +75,45 @@ Broken into ordered instructions:
 - The whale GLB is CC BY 4.0 (Unit299e, Sketchfab) and must be credited on
   screen while displayed.
 
+### Progress against this brief
+
+Work done so far, in order, each as its own commit:
+
+- `24ec9de` **feat(perf): measure the frame budget instead of guessing at it.**
+  New src/world/perf.js: interval EMA, worst case, 4 ms histogram, CPU update
+  time, draw calls / triangles / programs. Opt-in behind `?debug=perf`, no-op by
+  default. Measured baseline at city zoom: 728 draw calls, 201,230 triangles, 810
+  geometries, 25 programs. 810 geometries against 728 calls means nearly every
+  geometry is its own draw call — nothing is batched.
+- `5d12eb1` **fix(ui): load the fonts the CSS has been asking for.** Inter and
+  JetBrains Mono were named in the token block from the first commit and never
+  loaded, so every review so far was of the platform fallback. Also fixed
+  index.html's critical style, which set #001122 against a --go-abyss of #00060f.
+- `c30de38` **fix(ui): lift the faintest ink to an accessible contrast.**
+  --go-ink-faint was 3.95:1 at 10.5px; now 5.36:1. Rest of the palette checked
+  and passing AA.
+- `becbba1` **feat(perf): report which renderer produced the numbers.** The
+  census names the GL renderer, because headless Chrome here is SwiftShader — a
+  CPU rasteriser — and a frame rate from it is not the user's experience.
+
+Also landed in the same pass: distance culling for legacy fauna (both the CPU
+update and the draw), and a guard on the rocks census that was throwing under
+`?only=whale` and making the report node come back empty.
+
+### What the measurements say to do next
+
+1. **Draw calls.** 657 of the city zoom's 728 calls belong to the non-whale
+   scene: 23 towers (7 named, 16 ambient) at roughly 30 calls each, being 7 kelp
+   sub-objects plus 15-20 legacy creature meshes plus creature clouds. These are
+   small repeated props sharing materials — the textbook case for merging or
+   instancing. This is the single biggest performance win available.
+2. **Interactivity depth.** GithubCity's entire interaction surface is a username
+   form, orbit controls, an auto-rotate toggle, a shadow slider and an STL export.
+   We already have picking, selection, a repo card, a legend, a zoom rail and
+   five levels; what we lack is the *layer* between "look at it" and "understand
+   it" — per-creature inspect, a codex, camera flights between related things.
+3. **Vision passes.** Still blocked on the VL route.
+
 ### State at the time this log was started
 
 - Last commit: 08481bf (screenshot refresh), preceded by ba4c971 (the whale
