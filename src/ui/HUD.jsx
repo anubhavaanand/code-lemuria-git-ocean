@@ -262,6 +262,13 @@ function RepoCard({ repo, onClose, onFocus }) {
           <p className="go-hint">
             Every creature is a mapped data point. Nothing is decorative.
           </p>
+          {/*
+            The catalogue below is the design: what each of the eighteen
+            creatures means and which field drives it. The chips above say what
+            this particular tower actually built. Both are needed and neither
+            substitutes for the other — the design explains the mapping, the
+            chips answer "so what am I looking at right now".
+          */}
 
           {/* What actually built for this repo, straight from the colony's own
               registry. The list below is the full mapping — the catalogue — but
