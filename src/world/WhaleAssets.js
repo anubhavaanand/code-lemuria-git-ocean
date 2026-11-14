@@ -129,6 +129,84 @@ function measuredExtent(root, axis) {
   return found ? max - min : 0;
 }
 
+/**
+ * Extent of the body the GPU will actually draw, measured through the skin.
+ *
+ * measuredExtent() reads the POSITION accessor, which is the mesh in its REST
+ * pose. A skinned mesh is not drawn in its rest pose: every vertex is pushed
+ * through the armature, and on this asset the armature node carries a scale of
+ * its own. measuredExtent() therefore under-reports the animal by exactly that
+ * factor, and because the scale is applied uniformly the error is invisible in
+ * a ratio check — the body came out the right *shape* and 2.14x the wrong *size*.
+ *
+ * Measured rather than assumed: the raw accessor extents are 4.646 (z) by 2.713
+ * (y); the deformed cloud spans 9.96 by 5.81, a ratio of 2.144, which is the
+ * armature node's 2.1436 scale. On screen the animal read 590 x 266 px where
+ * the model predicted 266 x 97 px — the same 2.2x, which is what finally
+ * separated "wrong size" from "wrong proportions".
+ *
+ * Every vertex is skinned here, not every Nth one: this runs once at load, and
+ * a sampled cloud is fine for locating a centre (below) but not for a size that
+ * every appendage is seated against.
+ */
+function deformedExtent(root, axis) {
+  const lo = new THREE.Vector3(Infinity, Infinity, Infinity);
+  const hi = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+  const v = new THREE.Vector3();
+  const skinned = new THREE.Vector3();
+  const boneMat = new THREE.Matrix4();
+
+  root.updateWorldMatrix(true, true);
+
+  // The deformed points come back in WORLD space, so bring them back into
+  // root's own space to compare like with like.
+  const invRoot = new THREE.Matrix4()
+    .copy(root.matrixWorld)
+    .invert();
+
+  root.traverse((o) => {
+    if (!o.isSkinnedMesh || !o.geometry) return;
+    const pos = o.geometry.getAttribute("position");
+    const si = o.geometry.getAttribute("skinIndex");
+    const sw = o.geometry.getAttribute("skinWeight");
+    if (!pos || !si || !sw) return;
+    if (!o.skeleton || !o.skeleton.bones) return;
+
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i);
+      skinned.set(0, 0, 0);
+      for (let c = 0; c < 4; c++) {
+        const j = si.getComponent(i, c);
+        const wgt = sw.getComponent(i, c);
+        if (wgt === 0 || j === undefined) continue;
+        const bone = o.skeleton.bones[j];
+        if (!bone) continue;
+        boneMat.multiplyMatrices(bone.matrixWorld, o.skeleton.boneInverses[j]);
+        skinned.addScaledVector(v.clone().applyMatrix4(boneMat), wgt);
+      }
+      if (skinned.lengthSq() === 0) skinned.copy(v);
+      skinned.applyMatrix4(invRoot);
+      const e =
+        axis === "x" ? skinned.x : axis === "y" ? skinned.y : skinned.z;
+      // Compare on whichever axis was asked for, not always x.
+      if (axis === "x") {
+        if (e < lo.x) lo.x = e;
+        if (e > hi.x) hi.x = e;
+      } else if (axis === "y") {
+        if (e < lo.y) lo.y = e;
+        if (e > hi.y) hi.y = e;
+      } else {
+        if (e < lo.z) lo.z = e;
+        if (e > hi.z) hi.z = e;
+      }
+    }
+  });
+
+  if (axis === "x") return hi.x > lo.x ? hi.x - lo.x : 0;
+  if (axis === "y") return hi.y > lo.y ? hi.y - lo.y : 0;
+  return hi.z > lo.z ? hi.z - lo.z : 0;
+}
+
 // Every axis the callers ask for, explicitly.
 //
 // The original helper was `axis === "x" ? pos.getX(i) : pos.getZ(i)`, so any
@@ -188,6 +266,19 @@ export function normalizeWhale(source, targetLength) {
   const alongZ = ez >= ex;
   const native = alongZ ? ez : ex;
   const k = native > 0.0001 ? targetLength / native : 1;
+
+  // The armature's own scale multiplies every vertex on top of k, so applying k
+  // to the native extent lands the animal at k/native = 1/1 world unit per unit
+  // of target length, not at targetLength. Divide the extra out of k so the
+  // drawn body — raw * armatureScale * k — is exactly targetLength long.
+  //
+  // This is the bug that made every silhouette 2.14x too large while every
+  // ratio check passed: the body was the right shape at the wrong size, and
+  // only a comparison of projected pixels against projected census units showed
+  // it. See deformedExtent() for the measurement.
+  const deformed = deformedExtent(inner, alongZ ? "z" : "x");
+  const armatureScale = native > 0.0001 ? deformed / native : 1;
+  if (armatureScale > 1.0001) k /= armatureScale;
 
   inner.scale.setScalar(k);
   // Nose toward -X.
@@ -334,28 +425,30 @@ export function normalizeWhale(source, targetLength) {
   const size = new THREE.Vector3();
   box2.getSize(size);
 
-  // The authoritative extent is MEASURED, not boxed — the same reason
-  // measuredExtent() exists. A Box3 on a skinned mesh reports the bind pose,
-  // and on this asset the bind pose is a different shape from the geometry
-  // accessors: the joints splay the body, so the box comes back shorter than
-  // the animal actually is. Measuring the POSITION accessors after the wrapper
-  // transform gives the extent the GPU will draw at.
+  // The authoritative extent is MEASURED THROUGH THE SKIN, not boxed and not
+  // read off the accessors.
   //
-  // Wrapper scale is k, and the wrapper yaw is a multiple of PI/2, so the
-  // world-axis extents are just the local extents scaled and swapped.
-  const wx = measuredExtent(inner, "x") * k;
-  const wz = measuredExtent(inner, "z") * k;
-  const bodyX = Math.max(wx, wz); // nose-to-tail, whichever local axis it was
-  const bodyZ = Math.min(wx, wz); // across the flanks
+  // A Box3 on a skinned mesh reports the bind pose; the POSITION accessors report
+  // the rest pose. Neither is what the GPU draws: the armature deforms every
+  // vertex, and on this asset the armature node carries a scale of its own.
+  // measuredExtent() therefore under-reported the animal by that factor, which
+  // is how it came out 2.14x too large on screen while every ratio check passed.
+  //
+  // deformedExtent() skins the cloud the same way the shader does and returns
+  // the extent in the mesh's own space, so multiplying by k is the whole story.
+  const dx = deformedExtent(inner, "x") * k;
+  const dz = deformedExtent(inner, "z") * k;
+  const dy = deformedExtent(inner, "y") * k;
+  const bodyX = Math.max(dx, dz); // nose-to-tail, whichever local axis it was
+  const bodyZ = Math.min(dx, dz); // across the flanks
 
-  // Body length is measured, not boxed.
+  // Body length is what was asked for, measured through the skin.
   size.x = targetLength;
   // Lateral width is clamped: a humpback is roughly 0.3x as wide as it is long,
   // and anything above ~0.45x means a bind-pose artefact leaked through.
   size.z = THREE.MathUtils.clamp(bodyZ, targetLength * 0.16, targetLength * 0.45);
-  // Height is returned as measured so a caller seating a dorsal fin or a
-  // blowhole against it is not reading a bind-pose number.
-  size.y = bodyX > 0 ? measuredExtent(inner, "y") * k : size.y;
+  // Height is measured, not assumed — every appendage is seated against it.
+  size.y = bodyX > 0 ? dy : size.y;
 
   return { wrapper, size };
 }
