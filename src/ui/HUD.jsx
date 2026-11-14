@@ -590,6 +590,10 @@ export default function HUD({
       // Step the camera one level at a time with the arrow keys. The number
       // keys jump to an absolute level; arrows move relative to where you are,
       // which is the difference between a menu and a walk.
+      // `levels` is a prop and the effect depends on it, so a caller that
+      // rebuilds the array each render would re-bind the listener every render.
+      // The zoom levels are a constant in this app; if that ever changes, the
+      // dependency list below is where to look.
       const at = levels.findIndex((l) => l.id === activeLevelId);
       // `findIndex` returns -1 for a level id that is not in the list, and -1 + 1
       // is 0 — an arrow-down from an unknown level would jump to the top instead
