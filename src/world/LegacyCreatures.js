@@ -282,14 +282,29 @@ export class LegacyColony {
     const seg = 6;
     const body = new THREE.Group();
     const mat = flesh(0x6a6258, { flat: true, roughness: 0.7 });
+    // Six segments of graded radius, all spheres. Instanced into one mesh: the
+    // plates never move relative to each other, so they only need to move with
+    // the body, which is the group's transform.
+    const plates = new THREE.InstancedMesh(
+      new THREE.SphereGeometry(1, 7, 5),
+      mat,
+      seg
+    );
+    const pm = new THREE.Matrix4();
+    const pq = new THREE.Quaternion();
+    const pp = new THREE.Vector3();
+    const ps = new THREE.Vector3();
     for (let i = 0; i < seg; i++) {
       const t = i / (seg - 1);
       const r = this.G * (0.34 - Math.abs(t - 0.45) * 0.24);
-      const plate = new THREE.Mesh(new THREE.SphereGeometry(r, 7, 5), mat);
-      plate.scale.set(1, 0.55, 0.85);
-      plate.position.z = (t - 0.5) * this.G * 1.5;
-      body.add(plate);
+      pp.set(0, 0, (t - 0.5) * this.G * 1.5);
+      ps.set(r, r * 0.55, r * 0.85);
+      pm.compose(pp, pq, ps);
+      plates.setMatrixAt(i, pm);
     }
+    plates.instanceMatrix.needsUpdate = true;
+    plates.computeBoundingSphere();
+    body.add(plates);
     const a = this.rng() * Math.PI * 2;
     const d = this.G * (3 + this.rng() * 2);
     body.position.set(Math.cos(a) * d, this.G * 0.18, Math.sin(a) * d);
@@ -882,29 +897,54 @@ export class LegacyColony {
     const n = this.isMobile ? 5 : 11;
     const mat = flesh(0xc87a9a, { flat: true, roughness: 0.8 });
     const polypGeo = new THREE.CylinderGeometry(this.G * 0.06, this.G * 0.1, this.G * 0.3, 6);
-    const polyps = [];
+    // Both parts are the same shape every time, so each is one InstancedMesh
+    // rather than n Meshes plus n more for the crowns.
+    const bodyMesh = new THREE.InstancedMesh(polypGeo, mat, n);
+    const crownGeo = new THREE.TorusGeometry(this.G * 0.08, this.G * 0.018, 4, 8);
+    const crownMat = emissive(0xe8a0b8, 0.5);
+    const crownMesh = new THREE.InstancedMesh(crownGeo, crownMat, n);
+
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const e = new THREE.Euler();
+    const p = new THREE.Vector3();
+    const s = new THREE.Vector3(1, 1, 1);
+    const off = new THREE.Matrix4();
+    const spin = new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(Math.PI / 2, 0, 0)
+    );
 
     for (let i = 0; i < n; i++) {
       const f = 0.1 + this.rng() * 0.55;
       const th = this.rng() * Math.PI * 2;
       const r = this.rAt(f) + this.G * 0.16;
-      const p = new THREE.Mesh(polypGeo, mat);
-      p.position.set(Math.cos(th) * r, this.yAt(f), Math.sin(th) * r);
-      p.rotation.z = Math.cos(th) * 0.6;
-      p.rotation.x = Math.sin(th) * 0.6;
-      this.group.add(p);
+      const y = this.yAt(f);
 
-      // Tentacle crown — a polyp is a ring of tentacles around a mouth
-      const crown = new THREE.Mesh(
-        new THREE.TorusGeometry(this.G * 0.08, this.G * 0.018, 4, 8),
-        emissive(0xe8a0b8, 0.5)
+      e.set(Math.sin(th) * 0.6, 0, Math.cos(th) * 0.6);
+      q.setFromEuler(e);
+      p.set(Math.cos(th) * r, y, Math.sin(th) * r);
+      m.compose(p, q, s);
+      bodyMesh.setMatrixAt(i, m);
+
+      // The crown sits at the polyp's mouth: the same transform, translated up
+      // the body's own axis and turned flat.
+      off.compose(
+        new THREE.Vector3(0, this.G * 0.16, 0),
+        spin,
+        s
       );
-      crown.rotation.x = Math.PI / 2;
-      crown.position.y = this.G * 0.16;
-      p.add(crown);
-      polyps.push(p);
+      off.premultiply(m);
+      crownMesh.setMatrixAt(i, off);
     }
-    this.coralPolyp = polyps;
+
+    bodyMesh.instanceMatrix.needsUpdate = true;
+    crownMesh.instanceMatrix.needsUpdate = true;
+    bodyMesh.computeBoundingSphere();
+    crownMesh.computeBoundingSphere();
+    this.group.add(bodyMesh, crownMesh);
+    // Counted by the fauna census, which asks how many of each creature a repo
+    // grew rather than what meshes it is made of.
+    this.coralPolyp = new Array(n).fill(0);
   }
 
   /**
@@ -916,32 +956,52 @@ export class LegacyColony {
     if (!this.repo.hasDownloadsEnabled) return;
 
     const n = this.isMobile ? 2 : 4;
+    // Photophores trail below the canopy like a string of lamps. One
+    // InstancedMesh, because a lamp is a lamp — they differ only in where they
+    // hang and how big they pulse.
+    const geo = new THREE.SphereGeometry(this.G * 0.1, 7, 5);
+    const mesh = new THREE.InstancedMesh(geo, emissive(0x8fd8ff, 2.2, 0.95), n);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.frustumCulled = false;
+    this.group.add(mesh);
+
     const lamps = [];
     for (let i = 0; i < n; i++) {
-      const light = new THREE.Mesh(
-        new THREE.SphereGeometry(this.G * 0.1, 7, 5),
-        emissive(0x8fd8ff, 2.2, 0.95)
-      );
-      // Photophores trail below the canopy like a string of lamps
       const f = 0.55 + this.rng() * 0.4;
       const th = this.rng() * Math.PI * 2;
       const r = this.rAt(f) + this.G * (1.2 + this.rng() * 1.8);
-      light.position.set(Math.cos(th) * r, this.yAt(f), Math.sin(th) * r);
-      this.group.add(light);
-
-      const ph = this.rng() * 6.28;
-      const y0 = light.position.y;
-      const a0 = th;
-      const rad = r;
-      this.animated.push((t) => {
-        // Hangs and drifts, pulsing — a lanternfish's photophores blink
-        const pulse = 0.6 + (Math.sin(t * 1.4 + ph) * 0.5 + 0.5) * 0.8;
-        light.scale.setScalar(pulse);
-        const th2 = a0 + t * 0.05;
-        light.position.set(Math.cos(th2) * rad, y0 + Math.sin(t * 0.35 + ph) * this.G * 0.3, Math.sin(th2) * rad);
+      lamps.push({
+        y0: this.yAt(f),
+        a0: th,
+        rad: r,
+        ph: this.rng() * 6.28,
       });
-      lamps.push(light);
     }
+
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const p = new THREE.Vector3();
+    const s = new THREE.Vector3();
+    const write = (t) => {
+      for (let i = 0; i < lamps.length; i++) {
+        const L = lamps[i];
+        // Hangs and drifts, pulsing — a lanternfish's photophores blink
+        const pulse = 0.6 + (Math.sin(t * 1.4 + L.ph) * 0.5 + 0.5) * 0.8;
+        const th2 = L.a0 + t * 0.05;
+        p.set(
+          Math.cos(th2) * L.rad,
+          L.y0 + Math.sin(t * 0.35 + L.ph) * this.G * 0.3,
+          Math.sin(th2) * L.rad
+        );
+        s.setScalar(pulse);
+        m.compose(p, q, s);
+        mesh.setMatrixAt(i, m);
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+    };
+
+    write(0);
+    this.animated.push(write);
     this.lanternfish = lamps;
   }
 
@@ -953,35 +1013,66 @@ export class LegacyColony {
     const mat = emissive(0xff7ad8, 0.55, 0.95);
     const slugs = [];
 
+    // A slug is a squashed sphere plus two rhinophores. Built as three
+    // InstancedMeshes for the whole colony — the body deforms in the geometry,
+    // so the shape is authored once rather than once per slug.
+    const bodyGeo = new THREE.SphereGeometry(this.G * 0.11, 7, 5);
+    bodyGeo.scale(2.2, 0.5, 0.8);
+    const bodyMesh = new THREE.InstancedMesh(bodyGeo, mat, n);
+    bodyMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    bodyMesh.frustumCulled = false;
+
+    const rhGeo = new THREE.CylinderGeometry(this.G * 0.012, this.G * 0.02, this.G * 0.16, 4);
+    const rhMesh = new THREE.InstancedMesh(rhGeo, mat, n * 2);
+    rhMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    rhMesh.frustumCulled = false;
+
     for (let i = 0; i < n; i++) {
-      const slug = new THREE.Group();
-      const bodyGeo = new THREE.SphereGeometry(this.G * 0.11, 7, 5);
-      bodyGeo.scale(2.2, 0.5, 0.8);
-      slug.add(new THREE.Mesh(bodyGeo, mat));
-
-      // Rhinophores — the two stalks that make a nudibranch a nudibranch
-      for (const s of [-1, 1]) {
-        const rh = new THREE.Mesh(new THREE.CylinderGeometry(this.G * 0.012, this.G * 0.02, this.G * 0.16, 4), mat);
-        rh.position.set(this.G * 0.14, this.G * 0.08, s * this.G * 0.03);
-        slug.add(rh);
-      }
-
-      const f0 = 0.3 + this.rng() * 0.5;
-      const th0 = this.rng() * Math.PI * 2;
-      this.group.add(slug);
-      slugs.push(slug);
-      const ph = this.rng() * 6.28;
-
-      this.animated.push((t) => {
-        // Crawls slowly upward — a nudibranch grazes as it goes
-        const f = f0 + Math.sin(t * 0.05 + ph) * 0.18;
-        const th = th0 + t * 0.035;
-        const r = this.rAt(f) + this.G * 0.2;
-        slug.position.set(Math.cos(th) * r, this.yAt(f), Math.sin(th) * r);
-        slug.rotation.y = -th + Math.PI / 2;
-        slug.rotation.z = Math.sin(t * 0.4 + ph) * 0.08;
+      slugs.push({
+        f0: 0.3 + this.rng() * 0.5,
+        th0: this.rng() * Math.PI * 2,
+        ph: this.rng() * 6.28,
       });
     }
+
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const e = new THREE.Euler();
+    const p = new THREE.Vector3();
+    const s = new THREE.Vector3(1, 1, 1);
+    const out = new THREE.Matrix4();
+    const rhOffset = new THREE.Matrix4();
+
+    const write = (t) => {
+      for (let i = 0; i < slugs.length; i++) {
+        const S = slugs[i];
+        // Crawls slowly upward — a nudibranch grazes as it goes
+        const f = S.f0 + Math.sin(t * 0.05 + S.ph) * 0.18;
+        const th = S.th0 + t * 0.035;
+        const r = this.rAt(f) + this.G * 0.2;
+        p.set(Math.cos(th) * r, this.yAt(f), Math.sin(th) * r);
+        e.set(0, -th + Math.PI / 2, Math.sin(t * 0.4 + S.ph) * 0.08);
+        q.setFromEuler(e);
+        m.compose(p, q, s);
+        bodyMesh.setMatrixAt(i, m);
+
+        for (let k = 0; k < 2; k++) {
+          rhOffset.makeTranslation(
+            this.G * 0.14,
+            this.G * 0.08,
+            (k === 0 ? -1 : 1) * this.G * 0.03
+          );
+          out.multiplyMatrices(m, rhOffset);
+          rhMesh.setMatrixAt(i * 2 + k, out);
+        }
+      }
+      bodyMesh.instanceMatrix.needsUpdate = true;
+      rhMesh.instanceMatrix.needsUpdate = true;
+    };
+
+    write(0);
+    this.group.add(bodyMesh, rhMesh);
+    this.animated.push(write);
     this.nudibranch = slugs;
   }
 
@@ -1024,14 +1115,23 @@ export class LegacyColony {
     shark.add(tail);
 
     // The gill slits of a basking shark are enormous — that is the whole point
-    // of the animal. Three dark bands behind the head.
+    // of the animal. Three dark bands behind the head, one InstancedMesh: they
+    // are the same half-torus at three depths.
     if (!this.isMobile) {
+      const slitGeo = new THREE.TorusGeometry(L * 0.09, L * 0.012, 4, 10, Math.PI);
+      slitGeo.rotateY(Math.PI / 2);
+      const slits = new THREE.InstancedMesh(slitGeo, mat, 3);
+      const sm = new THREE.Matrix4();
+      const sq = new THREE.Quaternion();
+      const sp = new THREE.Vector3();
+      const ss = new THREE.Vector3(1, 1, 1);
       for (let i = 0; i < 3; i++) {
-        const slit = new THREE.Mesh(new THREE.TorusGeometry(L * 0.09, L * 0.012, 4, 10, Math.PI), mat);
-        slit.rotation.y = Math.PI / 2;
-        slit.position.set(0, 0, L * 0.28 - i * L * 0.07);
-        shark.add(slit);
+        sp.set(0, 0, L * 0.28 - i * L * 0.07);
+        sm.compose(sp, sq, ss);
+        slits.setMatrixAt(i, sm);
       }
+      slits.instanceMatrix.needsUpdate = true;
+      shark.add(slits);
     }
 
     shark.position.set(0, this.yAt(0.75), -this.G * 9);
