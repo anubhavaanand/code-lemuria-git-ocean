@@ -37,3 +37,8 @@ context/
 .dsh/
 .specify/
 .directory
+
+# Reference clones — read-only upstream projects kept locally for study.
+# GithubCity is here to learn how its world is made interactive; none of it is
+# shipped, so it must never enter this repo's history.
+.reference/

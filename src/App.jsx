@@ -18,6 +18,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OceanWorld } from "./world/OceanWorld";
+import { FrameProfiler } from "./world/perf";
 import { ZOOM_LEVELS } from "./world/constants";
 import HUD from "./ui/HUD";
 import "./index.css";
@@ -62,6 +63,14 @@ export default function App() {
         // px against a predicted 267 x 101.
         onlyWhales: !!new URLSearchParams(window.location.search).get(
           "only"
+        ),
+        // `?debug=perf` turns on the frame profiler. Constructed here rather
+        // than read inside OceanWorld so the world has no opinion about URLs:
+        // the profiler is a dependency like any other, and the default is the
+        // no-op object, so the production path allocates nothing and measures
+        // nothing.
+        profiler: new FrameProfiler(
+          new URLSearchParams(window.location.search).get("debug") === "perf"
         ),
       });
     } catch (e) {
@@ -362,7 +371,8 @@ export default function App() {
     const wantsRockReport = debugMode === "rocks";
     const wantsFaunaReport = debugMode === "fauna";
     const wantsWhaleReport = debugMode === "whale";
-    if (wantsRockReport || wantsFaunaReport || wantsWhaleReport) {
+    const wantsPerfReport = debugMode === "perf";
+    if (wantsRockReport || wantsFaunaReport || wantsWhaleReport || wantsPerfReport) {
       const emit = () => {
         const el = containerRef.current;
         if (!el) return;
@@ -779,6 +789,22 @@ export default function App() {
             el.clientWidth,
             el.clientHeight
           );
+        }
+        // Frame budget. Only populated when the profiler was switched on, so
+        // an ordinary census costs one property read.
+        if (wantsPerfReport) {
+          payload.perf = instance.profiler.report();
+          // What the renderer actually drew, for the same frame.
+          payload.render = {
+            calls: instance.renderer.info.render.calls,
+            triangles: instance.renderer.info.render.triangles,
+            points: instance.renderer.info.render.points,
+            lines: instance.renderer.info.render.lines,
+            geometries: instance.renderer.info.memory.geometries,
+            textures: instance.renderer.info.memory.textures,
+            programs:
+              (instance.renderer.info.programs || []).length,
+          };
         }
         node.textContent = JSON.stringify(payload);
       };

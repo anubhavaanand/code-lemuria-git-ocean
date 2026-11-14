@@ -56,6 +56,7 @@ import { CreatureSystem, AmbientSchool } from "./CreatureGeometry";
 import { LegacyColony } from "./LegacyCreatures";
 import { SonarObelisk, buildClusterLights } from "./SonarObelisk";
 import { CameraRig } from "./CameraRig";
+import { FrameProfiler, NOOP_PROFILER } from "./perf";
 
 const isMobileDevice = () =>
   typeof navigator !== "undefined" &&
@@ -104,6 +105,13 @@ export class OceanWorld {
     this.clock = new THREE.Clock();
     this.elapsed = 0;
     this.frame = 0;
+
+    // Measured, not guessed. The header of this file used to promise distance
+    // culling and a frame budget, and neither existed: `drawDistance` was
+    // assigned once and never read, and `_frustum` was rebuilt every frame and
+    // never consulted. The profiler exists so a performance claim can be
+    // checked against a number.
+    this.profiler = opts.profiler || NOOP_PROFILER;
 
     this.towers = [];          // { tower, repo, entry }
     this.whales = [];          // { whale, entry, orbit }
@@ -716,7 +724,17 @@ export class OceanWorld {
     const tick = () => {
       this.frameHandle = requestAnimationFrame(tick);
 
+      // Frame interval first: this is the number the user feels, and under
+      // virtual time it is the only honest one (see perf.js).
+      const intervalStart = performance.now();
+      this.profiler.begin();
+
       const delta = Math.min(0.05, this.clock.getDelta());
+      // The world's own CPU work starts here and stops at the render call, so
+      // the measured slice is the update loops only. The render itself is the
+      // GPU's, and including it would make this number a frame interval rather
+      // than a CPU cost — which is what makes it diagnostic.
+      const updateStart = performance.now();
       // `timeScale` is the other half of `?freeze=1`. Pinning the orbit alone is
       // not enough to compare two frames: caustics, god rays, marine snow and
       // kelp sway all advance on `elapsed`, so an on/off diff still lit up every
@@ -879,7 +897,25 @@ export class OceanWorld {
         }
       }
 
+      // Read the CPU cost before rendering, so it measures the update loops and
+      // not the draw. On a GPU-bound frame the render dominates and this number
+      // is the only one that says whether the JS is the problem.
+      const updateMs = performance.now() - updateStart;
+
       this.renderer.render(this.scene, this.camera);
+
+      // Read the frame's cost only when asked for. `renderer.info` is reset by
+      // three at the start of every render, so this is the count for the frame
+      // that just finished, not a running total.
+      if (this.profiler.enabled) {
+        const info = this.renderer.info;
+        this.profiler.end(updateMs, {
+          calls: info.render.calls,
+          triangles: info.render.triangles,
+          points: info.render.points,
+          lines: info.render.lines,
+        });
+      }
     };
 
     tick();
