@@ -809,6 +809,9 @@ kbd {
   gap: 4px;
 }
 
+/* A chip is a button: it opens the codex entry for that creature. Styled to
+   still read as a tag rather than as a control — the affordance is the cursor
+   and the open state, not a raised button face. */
 .go-present-chip {
   font-size: 10px;
   line-height: 1;
@@ -819,6 +822,25 @@ kbd {
   color: var(--go-ink-dim);
   font-family: var(--go-mono);
   white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.go-present-chip:hover {
+  border-color: rgba(77, 234, 255, 0.5);
+  background: rgba(77, 234, 255, 0.14);
+  color: var(--go-ink);
+}
+
+.go-present-chip.is-open {
+  border-color: rgba(77, 234, 255, 0.75);
+  background: rgba(77, 234, 255, 0.2);
+  color: var(--go-ink);
+}
+
+.go-present-chip:focus-visible {
+  outline: 2px solid var(--go-cyan);
+  outline-offset: 1px;
 }
 
 .go-present-chip em {
@@ -826,6 +848,58 @@ kbd {
   margin-left: 3px;
   color: var(--go-cyan);
   font-variant-numeric: tabular-nums;
+}
+
+/* The codex entry: field, meaning, and the ecological argument. */
+.go-codex {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--go-edge);
+  animation: go-fade-in 180ms ease;
+}
+
+.go-codex-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.go-codex-head strong {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--go-ink);
+  letter-spacing: -0.005em;
+}
+
+.go-codex-trophic {
+  font-size: 8.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--go-ink-faint);
+  white-space: nowrap;
+}
+
+.go-codex-field {
+  font-family: var(--go-mono);
+  font-size: 9.5px;
+  color: var(--go-cyan);
+  margin-top: 2px;
+}
+
+.go-codex-meaning {
+  margin: 6px 0 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--go-ink-dim);
+}
+
+.go-codex-biology {
+  margin: 6px 0 0;
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--go-ink-faint);
+  font-style: italic;
 }
 
 /* Raw JSON */
@@ -972,6 +1046,19 @@ kbd {
   color: var(--go-cyan);
   animation: go-pulse 1.8s ease-in-out infinite;
   text-shadow: 0 0 30px rgba(53, 224, 255, 0.7);
+}
+
+/* The codex entry is inserted, not toggled, so it needs its own entrance —
+   reusing go-slide-in would slide it in from the card edge. */
+@keyframes go-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 @keyframes go-pulse {

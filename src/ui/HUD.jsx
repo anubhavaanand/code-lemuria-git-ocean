@@ -11,6 +11,7 @@
  */
 
 import React, { useEffect, useMemo, useState } from "react";
+import { CODEX, codexEntry } from "../world/codex";
 
 /* ------------------------------------------------------------------ */
 /* Small pieces                                                        */
@@ -130,6 +131,9 @@ const WHALE_LABEL = {
 
 function RepoCard({ repo, onClose, onFocus }) {
   const [tab, setTab] = useState("overview");
+  // Which creature the user has opened, so the codex can show one entry rather
+  // than eighteen. `null` means "show the whole catalogue".
+  const [entry, setEntry] = useState(null);
   if (!repo) return null;
 
   const sp = repo.whaleSpecies || {};
@@ -280,13 +284,60 @@ function RepoCard({ repo, onClose, onFocus }) {
                 On this tower ({repo.__fauna.length})
               </span>
               <div className="go-present-list">
-                {repo.__fauna.map((f) => (
-                  <span className="go-present-chip" key={f.name}>
-                    {f.name}
-                    {f.count > 1 && <em>×{f.count}</em>}
-                  </span>
-                ))}
+                {repo.__fauna.map((f) => {
+                  const c = codexEntry(f.name);
+                  // The chip carries the common name now, not the key: "brain
+                  // coral" is the thing a reader can picture, "brainCoral" is a
+                  // field in a JSON file. The key stays available as the title
+                  // so a developer can still trace it to the registry.
+                  return (
+                    <button
+                      type="button"
+                      className={
+                        "go-present-chip" +
+                        (entry === f.name ? " is-open" : "")
+                      }
+                      key={f.name}
+                      title={`${c.field} — ${c.meaning}`}
+                      aria-pressed={entry === f.name}
+                      onClick={() =>
+                        setEntry((cur) => (cur === f.name ? null : f.name))
+                      }
+                    >
+                      {c.label}
+                      {f.count > 1 && <em>×{f.count}</em>}
+                    </button>
+                  );
+                })}
               </div>
+
+              {/* One creature opened: the mapping, the field, and the reason the
+                  ocean would make this creature for this data. The "why" is the
+                  part that makes the design law checkable by a reader rather
+                  than asserted by the author. */}
+              {entry && (
+                <div className="go-codex" role="note">
+                  <div className="go-codex-head">
+                    <strong>{codexEntry(entry).label}</strong>
+                    <span className="go-codex-trophic">
+                      {codexEntry(entry).trophic}
+                    </span>
+                  </div>
+                  <div className="go-codex-field">
+                    {codexEntry(entry).field}
+                    {(() => {
+                      const rec = (repo.__fauna || []).find(
+                        (f) => f.name === entry
+                      );
+                      return rec && rec.count > 1 ? ` ×${rec.count}` : "";
+                    })()}
+                  </div>
+                  <p className="go-codex-meaning">{codexEntry(entry).meaning}</p>
+                  <p className="go-codex-biology">
+                    {codexEntry(entry).biology}
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
