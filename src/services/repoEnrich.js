@@ -208,10 +208,14 @@ export async function fetchContributors(owner, repo) {
  * practice, not linear.
  */
 export async function fetchCommitTotal(owner, repo, branch) {
+  // `null`, not 0, when the header is absent: a repository with one commit and a
+  // repository whose count could not be read are different answers, and the
+  // caller records the difference. Zero would be a claim that the repository has
+  // no history at all.
   const { last } = await restRaw(
     `/repos/${owner}/${repo}/commits?sha=${encodeURIComponent(branch)}&per_page=1`
   ).catch(() => ({ last: null }));
-  return last != null ? last : 0;
+  return last != null ? last : null;
 }
 
 /**
@@ -285,16 +289,20 @@ export async function fetchCiStatus(owner, repo, branch) {
  * enrichment reports that rather than letting the scene draw an absence.
  */
 export async function fetchTreeSignals(owner, repo, branch) {
-  const data = await rest(
-    `/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
-    TTL.tree
-  ).catch(() => null);
+  // One request. The path is built inline rather than through a helper: an
+  // earlier version called the REST client through a local name that shadowed
+  // the module's own function, so the "request" returned a function, `paths`
+  // came back empty and every template question was answered "absent" — a bug
+  // that looked exactly like a repository with no CONTRIBUTING file.
+  //
+  // A failure here is a THROWN error on purpose. Swallowing it and returning
+  // `{ treeTruncated: true, templatesKnown: false }` meant a network or server
+  // failure was indistinguishable from a repository that genuinely ships no
+  // templates, and the caller never learned that anything went wrong.
+  const path = `/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`;
+  const tree = await rest(path, TTL.tree);
 
-  if (!data) {
-    return { treeTruncated: true, templatesKnown: false };
-  }
-
-  const paths = (data.tree || []).map((t) => t.path);
+  const paths = (tree.tree || []).map((t) => t.path);
   const any = (re) => paths.some((p) => re.test(p));
 
   // The tests below read the full path, not the basename, so a regex has to
@@ -315,7 +323,7 @@ export async function fetchTreeSignals(owner, repo, branch) {
   // wins. Ties then fall to tree order, which is GitHub's, not ours.
   let readmeLength = 0;
   let readmeDepth = Infinity;
-  const readmes = (data.tree || []).filter(
+  const readmes = (tree.tree || []).filter(
     (t) => t.type === "blob" && /^readme[^/]*$/i.test(t.path.split("/").pop() || "")
   );
   for (const r of readmes) {
@@ -327,8 +335,8 @@ export async function fetchTreeSignals(owner, repo, branch) {
   }
 
   return {
-    treeTruncated: !!data.truncated,
-    templatesKnown: !data.truncated,
+    treeTruncated: !!tree.truncated,
+    templatesKnown: !tree.truncated,
     hasContributing: any(/(^|\/)contributing(\.[a-z0-9]+)?$/i),
     hasCodeOfConduct: any(/(^|\/)code_of_conduct(\.[a-z0-9]+)?$/i),
     hasIssueTemplate: any(/(^|\/)\.github\/issue_template(\.[a-z0-9]+)?$/i) ||
@@ -406,7 +414,11 @@ export async function enrichRepository(owner, repo, opts = {}) {
   else errors.push(`tree: ${tree.reason.message}`);
 
   if (commits.status === "fulfilled" && commits.value) fields.totalCommits = commits.value;
-  else errors.push(`commits: ${commits.reason ? commits.reason.message : "no total"}`);
+  else if (commits.status === "rejected") errors.push(`commits: ${commits.reason.message}`);
+  // A fulfilled call with no total is not an error and not a zero: the first
+  // query's exact branch history is the better source, and this pass simply had
+  // nothing to add. Recording it as an error would send a reader looking for a
+  // failure that did not happen.
 
   return { fields, errors, branch };
 }

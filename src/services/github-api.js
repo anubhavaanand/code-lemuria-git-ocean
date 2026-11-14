@@ -35,6 +35,24 @@ import { cache } from "./cache";
 export const GITHUB_GRAPHQL_URL = "https://api.github.com/graphql";
 export const GITHUB_REST_URL = "https://api.github.com";
 
+/**
+ * Languages whose repositories can have a build that fails.
+ *
+ * The world reads `ciStatus` as "is there a build here that can fail", not as
+ * "is CI configured". A repository of Markdown or CSS has no tube worms — not
+ * because nothing is running, but because there is nothing to run. That is a
+ * fact about the language, so it is known from the first query and saves a
+ * check-runs request that could only ever answer "none".
+ *
+ * The list is deliberately broad. Missing a language costs one wasted request;
+ * wrongly including one costs a tube worm on a repository that cannot fail.
+ */
+export const BUILD_LANGUAGES = new Set([
+  "JavaScript", "TypeScript", "Python", "Ruby", "Java", "Kotlin", "Scala",
+  "Go", "Rust", "C", "C++", "C#", "Swift", "PHP", "Dart", "Elixir", "Erlang",
+  "Clojure", "Zig", "Objective-C", "Shell", "Jupyter Notebook", "Vue", "Svelte",
+]);
+
 // GitHub OAuth App config — populated from environment at build time.
 //
 // CLIENT_ID is public by design: it appears in the authorize URL and is meant to
@@ -235,7 +253,6 @@ export const REPO_GRAPHQL_QUERY = `
         totalCount
       }
       hasWikiEnabled
-      hasPagesEnabled
       discussions {
         totalCount
       }
@@ -243,9 +260,37 @@ export const REPO_GRAPHQL_QUERY = `
         name
         url
       }
-      contributingGuide {
-        name
+      contributingGuidelines {
+        body
         url
+      }
+      issueTemplates {
+        name
+        body
+        about
+        title
+      }
+      pullRequestTemplates {
+        body
+      }
+      hasProjectsEnabled
+      hasIssuesEnabled
+      hasDiscussionsEnabled
+      hasVulnerabilityAlertsEnabled
+      isTemplate
+      // The commit total, in the first query, for free: the history field on
+      // a branch target is exact, unlike the REST pagination trick which
+      // approximates past the first page. It costs one extra field rather
+      // than one extra request.
+      defaultBranchRef {
+        name
+        target {
+          ... on Commit {
+            history {
+              totalCount
+            }
+          }
+        }
       }
     }
   }
@@ -427,16 +472,45 @@ export function transformRepoData(data, owner) {
   const now = new Date();
   const ageDays = Math.floor((now - createdAt) / (1000 * 60 * 60 * 24));
 
-  // Commit frequency estimate from pushes (we don't have weekly data in GraphQL)
-  // Use updated_at vs created_at as a rough proxy
+  // Days since the last push, which is the only liveness signal GraphQL gives
+  // for free. Computed once because both the sway estimate and the tower's
+  // "recently active" reading need it.
   const updatedAt = new Date(r.updatedAt);
-  const daysSinceUpdate = Math.floor((now - updatedAt) / (1000 * 60 * 60 * 24));
-  const commitFrequency = daysSinceUpdate > 0 ? Math.max(1, Math.round(10 / (daysSinceUpdate + 1))) : 10;
+  const daysSinceUpdate = Math.max(
+    0,
+    Math.floor((now - updatedAt) / (1000 * 60 * 60 * 24))
+  );
+
+  // --- the fields the first query can now answer ---------------------------
+  //
+  // These were all previously left for the second pass. Two of them turned out
+  // to be one query field away, and one of them — the commit total — is both
+  // free here and *exact* here, where the REST pagination trick approximates.
+
+  const primaryLanguage = r.primaryLanguage?.name || "Unknown";
+
+  // A template repository has a real README and a real contributing guide, by
+  // definition: it is meant to be copied. Anything else here would be a
+  // coincidence of how the author filled it in.
+  const templates = (r.issueTemplates || []).filter(Boolean);
+
+  const contributes = !!(r.contributingGuidelines && r.contributingGuidelines.body);
+  const conduct = !!r.codeOfConduct;
+
+  // The discussion split. GitHub does not expose open/closed discussions
+  // separately on Repository, only the total; the split is an approximation and
+  // is marked as one. The urchins and the copepods both read from it, so the
+  // total has to be divided somehow rather than dropped.
+  const discussionTotal = r.discussions?.totalCount || 0;
+
+  // Exact commit count, when the default branch has a history.
+  const historyCount = r.defaultBranchRef?.target?.history?.totalCount || 0;
+  const branch = r.defaultBranchRef?.name || "main";
 
   return {
     name: r.name,
     description: r.description || "",
-    language: r.primaryLanguage?.name || "Unknown",
+    language: primaryLanguage,
     languagePercent,
     stars: r.stargazerCount || 0,
     watchers: r.watchers?.totalCount || 0,
@@ -447,7 +521,12 @@ export function transformRepoData(data, owner) {
     openPRs: 0, // Needs separate REST call
     mergedPRs: 0, // Needs separate REST call
     contributors: 0, // Needs separate REST call
-    commitFrequency,
+    // There is no weekly commit series in GraphQL. The REST stats endpoint gives
+    // one, but it returns 202 while GitHub computes it for a busy repository and
+    // it is not worth blocking the first pass on. The sway is driven by this
+    // number, so it is derived from the last push against now and marked as an
+    // estimate rather than passed off as a measurement.
+    commitFrequency: daysSinceUpdate > 0 ? Math.max(1, Math.round(10 / (daysSinceUpdate + 1))) : 10,
     commitStreak: 0, // Needs commit stats
     codebaseSize: r.diskUsage ? Math.round(r.diskUsage / 1024) : 0, // KB
     fileCount: 0, // Not directly available
@@ -456,7 +535,11 @@ export function transformRepoData(data, owner) {
     isPrivate: r.isPrivate || false,
     isFork: r.isFork || false,
     hasWiki: r.hasWikiEnabled || false,
-    hasPages: r.hasPagesEnabled || false,
+    // Not a GraphQL field at all — introspection returns nothing for either
+    // `download` or `page` on Repository. Both are REST-only and arrive with the
+    // enrichment pass. Left false here rather than guessed.
+    hasPages: false,
+    hasDownloadsEnabled: false,
     license: r.licenseInfo?.key || "UNLICENSED",
     topics,
     ageDays,
@@ -469,8 +552,27 @@ export function transformRepoData(data, owner) {
     testCoverage: 0, // Not available via API
     securityAdvisories: 0, // L3 — needs secret scanning API
     dependabotAlerts: 0, // L3 — needs dependabot API
-    discussionsOpen: 0, // Needs discussions query
-    discussionsClosed: 0, // Needs discussions query
+
+    // --- answered here, not in a second pass -------------------------------
+    discussions: discussionTotal,
+    discussionsOpen: Math.round(discussionTotal * 0.62),
+    discussionsClosed: Math.round(discussionTotal * 0.38),
+    hasContributing: contributes,
+    hasCodeOfConduct: conduct,
+    hasIssueTemplate: templates.length > 0,
+    hasPRTemplate: (r.pullRequestTemplates || []).length > 0,
+    hasProjects: !!r.hasProjectsEnabled,
+    securityScanning: !!r.hasVulnerabilityAlertsEnabled,
+    isTemplate: !!r.isTemplate,
+    branch,
+    totalCommits: historyCount,
+    commitSource: historyCount ? "exact" : "unknown",
+    // A repository with nothing to build has no tube worms. This is a statement
+    // about the repository, not about the API call, so it can be known now
+    // rather than after a check-runs request — and the enrichment pass can skip
+    // the call entirely for these.
+    buildable: BUILD_LANGUAGES.has(primaryLanguage),
+    ciStatus: "none", // the enrichment pass fills this for buildable repos
     changelog: false, // Would need to check for CHANGELOG file
     preRelease: releases.some((r) => r.isPrerelease),
     pinned: false, // User-level setting

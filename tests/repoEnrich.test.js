@@ -157,14 +157,16 @@ describe("fetchTreeSignals", () => {
     expect(s.readmeLength).toBe(10);
   });
 
-  it("reports unknown when the tree request fails entirely", async () => {
+  it("throws when the tree request fails, rather than calling it a truncated tree", async () => {
     global.fetch = mockFetch({
       [`${REST}/repos/o/r/git/trees/main`]: { body: {}, status: 404 },
     });
 
-    const s = await fetchTreeSignals("o", "r", "main");
-    expect(s.templatesKnown).toBe(false);
-    expect(s.treeTruncated).toBe(true);
+    // A 404 and a truncated tree are different answers. Reporting the first as
+    // the second would tell the scene a repository's templates are merely
+    // unknown when in fact nothing was read, and `enrichRepository` would not
+    // record a failure it should be able to show.
+    await expect(fetchTreeSignals("o", "r", "main")).rejects.toThrow();
   });
 });
 
