@@ -755,23 +755,11 @@ async function requestRepositoryRest(owner, name, cacheKey) {
   });
 
   if (!res.ok) {
-    // Reported here as well as in the console, because the console is only
-    // readable with the devtools open and this failure is invisible otherwise:
-    // the world falls back to mock data and looks correct. A 404 means the name
-    // the caller asked for is wrong, and that is a data bug, not a network one —
-    // worth surfacing where someone will see it.
-    if (typeof globalThis !== "undefined" && typeof globalThis.__GO_REPORT === "function") {
-      try {
-        globalThis.__GO_REPORT(`REST ${owner}/${name} -> ${res.status}`);
-      } catch {
-        // A reporting hook must never be the reason a fetch fails.
-      }
-    }
-    // Read the body before warning, because the status alone conflates two
-    // different situations and only one of them is worth retrying: a 403 from the
-    // rate limiter and a 404 for a repository that does not exist both look like
-    // "no data" to a caller, and a 403 from the rate limiter is the one that
-    // resolves itself in an hour.
+    // Read the body before saying anything, because the status alone conflates
+    // two different situations and only one of them is worth retrying: a 403 from
+    // the rate limiter and a 404 for a repository that does not exist both look
+    // like "no data" to a caller, and a 403 is the one that resolves itself in an
+    // hour.
     let detail = "";
     try {
       const body = await res.clone().json();
@@ -782,6 +770,21 @@ async function requestRepositoryRest(owner, name, cacheKey) {
     console.warn(
       `REST repository ${owner}/${name} -> ${res.status}${detail}`
     );
+
+    // And again through the App's hook, because the console is only readable with
+    // the devtools open and this failure is invisible otherwise: the world falls
+    // back to mock data and looks correct. The reason travels with the status —
+    // 404 and 403 are both "no record" to a caller, but only one of them is a
+    // wrong name in the mock data.
+    if (typeof globalThis !== "undefined" && typeof globalThis.__GO_REPORT === "function") {
+      try {
+        globalThis.__GO_REPORT(
+          `REST ${owner}/${name} -> ${res.status}${detail.replace(/^: /, " (").replace(/$/, ")")}`
+        );
+      } catch {
+        // A reporting hook must never be the reason a fetch fails.
+      }
+    }
     return null;
   }
 
