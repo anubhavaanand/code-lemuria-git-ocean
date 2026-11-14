@@ -91,6 +91,32 @@ Three things that wiring taught, all of them fixed:
 
 **Status: in progress, and it is the current blocker.**
 
+**The eighth root cause, and the one that explains the other seven.** The body
+was translated by half its length and then scaled, and every `BufferGeometry`
+transform post-multiplies — so the shift was scaled along with the vertices and
+the body landed at `x = -L/2 * L`. For vue's 48.78-unit humpback that is -1,166
+units. The group's bounding box measured 1,236 x 50.2 x 19.4 against a body of
+48.8 x 19.4 x 19.4: 25x too long, entirely because of where the body sat.
+
+The camera framing is solved from that box, so this never read as "the whale is
+displaced". It read as **the whale is missing**: `focusLength` came out 25x too
+large, the rig pulled the lens back to frame a 1,236-unit animal, and the render
+showed a small diagonal smudge in a large empty frame. Every visual-QA verdict
+that called the silhouette unreadable was correct about the picture and wrong
+about the cause.
+
+Fixed by reordering two lines (`ddd14f2`). After the fix the group box is
+73.3 x 50.2 x 19.4 with its centre at (9.34, 2.03, 0) against a 48.78-unit body —
+the flukes span the tail and the spout rises above the back, so exceeding the
+body is right. The isolated frame now measures a single connected blob of
+531 x 173 px, axis -8.9 degrees, ratio 3.07 (`5a6305c`).
+
+**The lesson this is, and it is the reason the whale took eight attempts**: a
+per-mesh measurement can be right while the aggregate is wrong. The census kept
+reporting a correct 48.8 x 19.4 mesh while `Box3.setFromObject` on the group said
+1,236. Measure the aggregate, and measure it in the frame the camera will solve
+from — not the mesh, not the node, the box the lens is fitted to.
+
 The whale is the project's hero element — it is what a viewer's eye goes to
 first, and it is the only element that is unmistakably an *animal*. It has been
 through seven distinct root causes:
