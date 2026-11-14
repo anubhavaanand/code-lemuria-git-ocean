@@ -194,18 +194,31 @@ export class LegacyColony {
 
     // Grooves: concentric ridges whose count and depth ARE the quality. A
     // low-quality README is nearly smooth; a high-quality one is deeply folded.
+    //
+    // One InstancedMesh for all the ridges. These were a Mesh and a fresh
+    // TorusGeometry per fold — up to eleven extra draw calls per colony for
+    // ridges that only ever differ in radius. A unit torus scaled in X and Z is
+    // the same shape at a fraction of the cost.
     const folds = Math.round(2 + q * 9);
     const foldDepth = 0.06 + q * 0.16;
+    const ridgeGeo = new THREE.TorusGeometry(1, foldDepth * 0.4, 5, this.isMobile ? 16 : 28);
+    ridgeGeo.rotateX(Math.PI / 2);
+    const ridges = new THREE.InstancedMesh(ridgeGeo, mat, folds);
+    const rm = new THREE.Matrix4();
+    const rq = new THREE.Quaternion();
+    const rp = new THREE.Vector3();
+    const rs = new THREE.Vector3();
     for (let i = 0; i < folds; i++) {
       const t = (i + 1) / (folds + 1);
-      const ring = new THREE.Mesh(
-        new THREE.TorusGeometry(R * t * 0.98, R * foldDepth * 0.4, 5, this.isMobile ? 16 : 28),
-        mat
-      );
-      ring.rotation.x = Math.PI / 2;
-      ring.position.y = R * (0.55 + q * 0.25) * Math.sqrt(Math.max(0, 1 - t * t)) * 0.92;
-      dome.add(ring);
+      const rr = R * t * 0.98;
+      rp.set(0, R * (0.55 + q * 0.25) * Math.sqrt(Math.max(0, 1 - t * t)) * 0.92, 0);
+      // The tube radius scales with the fold, so scale uniformly by the radius.
+      rs.set(rr, rr, rr);
+      rm.compose(rp, rq, rs);
+      ridges.setMatrixAt(i, rm);
     }
+    ridges.instanceMatrix.needsUpdate = true;
+    dome.add(ridges);
 
     const a = this.rng() * Math.PI * 2;
     const d = this.G * (2.6 + this.rng() * 2.4);
@@ -313,54 +326,97 @@ export class LegacyColony {
     const R = this.G * 0.3;
     const bodyMat = flesh(0x3a2a3a, { flat: true, roughness: 0.6 });
 
-    for (let i = 0; i < n; i++) {
-      const urchin = new THREE.Group();
-      const core = new THREE.Mesh(new THREE.SphereGeometry(R, 7, 5), bodyMat);
-      urchin.add(core);
+    // All the urchins share two InstancedMeshes — one for the tests, one for
+    // every spine on every urchin. The old code built a Group, a SphereGeometry
+    // and a spine InstancedMesh per urchin: 2 x 18 draw calls for the worst
+    // case, when the whole colony is two. Each urchin is still its own animated
+    // transform; the transform just lives in an instance matrix now.
+    const coreGeo = new THREE.SphereGeometry(R, 7, 5);
+    const cores = new THREE.InstancedMesh(coreGeo, bodyMat, n);
+    cores.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
 
-      // Spines — the visual signature of an echinoid. Instanced per urchin so
-      // each one still costs a single draw call.
-      const spines = this.isMobile ? 10 : 18;
-      const sGeo = new THREE.ConeGeometry(R * 0.1, R * 1.5, 3);
-      sGeo.translate(0, R * 0.75, 0);
-      const sMesh = new THREE.InstancedMesh(sGeo, flesh(0x5a3a5a, { flat: true }), spines);
-      const m = new THREE.Matrix4();
-      const q = new THREE.Quaternion();
-      const e = new THREE.Euler();
-      const p = new THREE.Vector3();
-      const s = new THREE.Vector3(1, 1, 1);
+    const spines = this.isMobile ? 10 : 18;
+    const sGeo = new THREE.ConeGeometry(R * 0.1, R * 1.5, 3);
+    sGeo.translate(0, R * 0.75, 0);
+    const spineMesh = new THREE.InstancedMesh(
+      sGeo,
+      flesh(0x5a3a5a, { flat: true }),
+      n * spines
+    );
+    spineMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+
+    // Per-urchin state, so the animation can rebuild both meshes' matrices.
+    const state = [];
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const e = new THREE.Euler();
+    const p = new THREE.Vector3();
+    const s = new THREE.Vector3(1, 1, 1);
+    const localM = new THREE.Matrix4();
+    const localQ = new THREE.Quaternion();
+    const localP = new THREE.Vector3();
+    const yAxis = new THREE.Vector3(0, 1, 0);
+    const dir = new THREE.Vector3();
+
+    for (let i = 0; i < n; i++) {
+      const f = 0.06 + this.rng() * 0.34;
+      const th = this.rng() * Math.PI * 2;
+      const r = this.rAt(f) + R * 0.55;
+      const rec = {
+        base: new THREE.Vector3(Math.cos(th) * r, this.yAt(f), Math.sin(th) * r),
+        rot: new THREE.Euler(this.rng() * 3, this.rng() * 3, this.rng() * 3),
+        phase: this.rng() * 6.28,
+        // Fibonacci sphere directions, computed once: the spine layout never
+        // changes, only the urchin's transform does.
+        dirs: [],
+      };
       for (let k = 0; k < spines; k++) {
         // Fibonacci sphere — even coverage without clumping
         const y = 1 - (k / (spines - 1)) * 2;
         const rad = Math.sqrt(Math.max(0, 1 - y * y));
         const phi = k * 2.399963;
-        const dir = new THREE.Vector3(Math.cos(phi) * rad, y, Math.sin(phi) * rad).normalize();
-        q.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
-        m.compose(new THREE.Vector3(0, 0, 0), q, s);
-        sMesh.setMatrixAt(k, m);
+        rec.dirs.push(
+          new THREE.Vector3(Math.cos(phi) * rad, y, Math.sin(phi) * rad).normalize()
+        );
       }
-      sMesh.instanceMatrix.needsUpdate = true;
-      urchin.add(sMesh);
-
-      // Sit on the stipe surface, biased low where drift algae settles
-      const f = 0.06 + this.rng() * 0.34;
-      const th = this.rng() * Math.PI * 2;
-      const r = this.rAt(f) + R * 0.55;
-      urchin.position.set(Math.cos(th) * r, this.yAt(f), Math.sin(th) * r);
-      urchin.rotation.set(this.rng() * 3, this.rng() * 3, this.rng() * 3);
-      this.group.add(urchin);
-
-      if (!this.isMobile) {
-        const phase = this.rng() * 6.28;
-        const y0 = urchin.position.y;
-        this.animated.push((t) => {
-          // Grazers inch upward; the spines catch the current and rock them
-          urchin.position.y = y0 + Math.sin(t * 0.16 + phase) * this.G * 0.22;
-          urchin.rotation.z += Math.sin(t * 0.4 + phase) * 0.0009;
-        });
-      }
+      state.push(rec);
     }
+
+    this._writeUrchins = (t) => {
+      for (let i = 0; i < state.length; i++) {
+        const rec = state[i];
+        // Grazers inch upward; the spines catch the current and rock them
+        const bob = this.isMobile ? 0 : Math.sin(t * 0.16 + rec.phase) * this.G * 0.22;
+        const rock = this.isMobile ? 0 : Math.sin(t * 0.4 + rec.phase) * 0.0009;
+
+        e.set(rec.rot.x, rec.rot.y, rec.rot.z + rock);
+        q.setFromEuler(e);
+        p.copy(rec.base);
+        p.y += bob;
+        m.compose(p, q, s);
+        cores.setMatrixAt(i, m);
+
+        // Each spine is the urchin's transform composed with a fixed local
+        // rotation that points it out along its Fibonacci direction.
+        for (let k = 0; k < spines; k++) {
+          localQ.setFromUnitVectors(yAxis, rec.dirs[k]);
+          localM.compose(localP.set(0, 0, 0), localQ, s);
+          const out = new THREE.Matrix4().multiplyMatrices(m, localM);
+          spineMesh.setMatrixAt(i * spines + k, out);
+        }
+      }
+      cores.instanceMatrix.needsUpdate = true;
+      spineMesh.instanceMatrix.needsUpdate = true;
+    };
+
+    this._writeUrchins(0);
+    this.group.add(cores);
+    this.group.add(spineMesh);
     this.urchins = n;
+
+    if (!this.isMobile) {
+      this.animated.push((t) => this._writeUrchins(t));
+    }
   }
 
   /**
@@ -439,29 +495,65 @@ export class LegacyColony {
     calyx.scale.set(1, 1.4, 1);
     crinoid.add(calyx);
 
+    // The arms are an InstancedMesh, not one Mesh each.
+    //
+    // Measured: this builder allocated 1 + arms x (1 + 4) geometries — up to 56
+    // meshes for a single colony, all sharing one material and one geometry per
+    // kind. Every one of them was its own draw call, and the only thing that
+    // varied between them was a transform. Now: one arm mesh for all the arms,
+    // and one pinnule mesh for all the pinnules, with the per-arm rotation
+    // recomputed into the instance matrices each frame.
     const armGeo = new THREE.CylinderGeometry(this.G * 0.025, this.G * 0.06, this.G * 2.4, 4);
     armGeo.translate(0, this.G * 1.2, 0);
-    const armMeshes = [];
-    for (let i = 0; i < arms; i++) {
-      const arm = new THREE.Mesh(armGeo, mat);
-      const th = (i / arms) * Math.PI * 2;
-      arm.rotation.z = Math.cos(th) * 0.85;
-      arm.rotation.x = Math.sin(th) * 0.85;
-      // Pinnules: feathery side branches, the thing that makes it a feather star
-      if (!this.isMobile) {
-        for (let k = 1; k <= 4; k++) {
-          const pin = new THREE.Mesh(
-            new THREE.CylinderGeometry(this.G * 0.008, this.G * 0.018, this.G * 0.34, 3),
-            mat
-          );
-          pin.position.y = this.G * 0.35 * k;
-          pin.rotation.z = 0.9;
-          arm.add(pin);
+    const armMesh = new THREE.InstancedMesh(armGeo, mat, arms);
+    armMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    crinoid.add(armMesh);
+
+    const am = new THREE.Matrix4();
+    const aq = new THREE.Quaternion();
+    const ae = new THREE.Euler();
+    const ap = new THREE.Vector3();
+    const as = new THREE.Vector3(1, 1, 1);
+
+    // Pinnules live in the ARM's local space, so their instance matrices are
+    // relative to the arm and are written once — they never move independently.
+    const PIN_PER_ARM = 4;
+    let pinMesh = null;
+    if (!this.isMobile) {
+      const pinGeo = new THREE.CylinderGeometry(this.G * 0.008, this.G * 0.018, this.G * 0.34, 3);
+      pinMesh = new THREE.InstancedMesh(pinGeo, mat, arms * PIN_PER_ARM);
+      const pm = new THREE.Matrix4();
+      const pq = new THREE.Quaternion();
+      const pe = new THREE.Euler(0, 0, 0.9);
+      pq.setFromEuler(pe);
+      const pp = new THREE.Vector3();
+      const ps = new THREE.Vector3(1, 1, 1);
+      let idx = 0;
+      for (let i = 0; i < arms; i++) {
+        for (let k = 1; k <= PIN_PER_ARM; k++) {
+          pp.set(0, this.G * 0.35 * k, 0);
+          pm.compose(pp, pq, ps);
+          pinMesh.setMatrixAt(idx++, pm);
         }
       }
-      crinoid.add(arm);
-      armMeshes.push({ arm, th });
+      pinMesh.instanceMatrix.needsUpdate = true;
+      armMesh.add(pinMesh); // inherits each arm's instance transform
     }
+
+    // Pose the arms immediately: `animated` does not run until the first
+    // update, and a colony that renders with every instance at the identity
+    // matrix is a stack of cylinders on the origin for one frame.
+    const armMeshes = [];
+    for (let i = 0; i < arms; i++) {
+      const a = (i / arms) * Math.PI * 2;
+      armMeshes.push({ th: a });
+      ae.set(Math.sin(a) * 0.6, 0, Math.cos(a) * 0.6);
+      aq.setFromEuler(ae);
+      am.compose(ap.set(0, 0, 0), aq, as);
+      armMesh.setMatrixAt(i, am);
+    }
+    armMesh.instanceMatrix.needsUpdate = true;
+    this._armMesh = armMesh;
 
     // Perched on the stipe, arms spread into the current
     const f = 0.2 + this.rng() * 0.5;
@@ -476,12 +568,15 @@ export class LegacyColony {
       // Arms unfurl and sweep — a crinoid is a passive suspension feeder, so
       // it holds its arms into the current and lets them flex.
       const k = Math.sin(t * 0.35) * 0.5 + 0.5;
+      const spread = 0.6 + k * 0.35;
       for (let i = 0; i < armMeshes.length; i++) {
-        const { arm, th: a } = armMeshes[i];
-        const spread = 0.6 + k * 0.35;
-        arm.rotation.z = Math.cos(a) * spread;
-        arm.rotation.x = Math.sin(a) * spread;
+        const a = armMeshes[i].th;
+        ae.set(Math.sin(a) * spread, 0, Math.cos(a) * spread);
+        aq.setFromEuler(ae);
+        am.compose(ap.set(0, 0, 0), aq, as);
+        armMesh.setMatrixAt(i, am);
       }
+      armMesh.instanceMatrix.needsUpdate = true;
     });
   }
 
