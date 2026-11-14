@@ -4,6 +4,7 @@ import {
   applyLiveToRepo,
   toHudRepo,
   indexMockRepos,
+  findTower,
   adoptIntoWorld,
   placementFor,
   worldRecordFromLive,
@@ -140,6 +141,76 @@ describe("adoptIntoWorld", () => {
     const data = { yourRepos: [tower()], following: [] };
     expect(adoptIntoWorld(data, []).updated).toEqual([]);
     expect(adoptIntoWorld(data, null).updated).toEqual([]);
+  });
+
+  // The mock world files the viewer's OWN repositories under the literal owner
+  // "you" — `makeRepo` defaults to it and YOUR_REPOS never overrides it — while
+  // a live record from the real profile carries the real login. A direct key
+  // lookup therefore missed every one of them, and the whole live pass reported
+  // `updated: []` beside REST calls returning 200.
+  describe("the viewer's own repositories", () => {
+    it("adopts a live record whose owner is the real login, not \"you\"", () => {
+      const data = { yourRepos: [tower({ owner: "you", name: "planetwood" })], following: [] };
+      const result = adoptIntoWorld(data, [
+        { owner: "anubhavaanand", name: "planetwood", stars: 404, codebaseSize: 153387 },
+      ]);
+      expect(result.updated).toEqual(["anubhavaanand/planetwood"]);
+      expect(result.skipped).toEqual([]);
+      expect(data.yourRepos[0].stars).toBe(404);
+      expect(data.yourRepos[0].codebaseSize).toBe(153387);
+    });
+
+    it("still refuses to let a followed user's repo overwrite it", () => {
+      // Same name, different owner: a different repository that happens to share
+      // a name. The alias must not make these interchangeable.
+      const data = {
+        yourRepos: [tower({ owner: "you", name: "planetwood", stars: 10 })],
+        following: [tower({ owner: "yyx990803", name: "planetwood", stars: 20 })],
+      };
+      const result = adoptIntoWorld(data, [
+        { owner: "yyx990803", name: "planetwood", stars: 99 },
+      ]);
+      expect(result.updated).toEqual(["yyx990803/planetwood"]);
+      expect(data.following[0].stars).toBe(99);
+      expect(data.yourRepos[0].stars).toBe(10);
+    });
+
+    it("adopts a followed repo by its real owner, alias or not", () => {
+      const data = {
+        yourRepos: [],
+        following: [tower({ owner: "sindresorhus", name: "ky" })],
+      };
+      const result = adoptIntoWorld(data, [{ owner: "sindresorhus", name: "ky", stars: 5 }]);
+      expect(result.updated).toEqual(["sindresorhus/ky"]);
+      expect(data.following[0].stars).toBe(5);
+    });
+  });
+});
+
+describe("findTower", () => {
+  const index = () =>
+    indexMockRepos({
+      yourRepos: [tower({ owner: "you", name: "planetwood" })],
+      following: [tower({ owner: "sindresorhus", name: "ky" })],
+    });
+
+  it("finds the viewer's own repo through the \"you\" alias", () => {
+    expect(findTower(index(), { owner: "anubhavaanand", name: "planetwood" }).name).toBe("planetwood");
+  });
+
+  it("prefers a direct owner match over the alias", () => {
+    const idx = index();
+    idx.set("acme/planetwood", tower({ owner: "acme", name: "planetwood" }));
+    expect(findTower(idx, { owner: "acme", name: "planetwood" }).owner).toBe("acme");
+  });
+
+  it("returns null for a repository the world does not draw", () => {
+    expect(findTower(index(), { owner: "nobody", name: "ghost" })).toBe(null);
+  });
+
+  it("returns null without a name", () => {
+    expect(findTower(index(), { owner: "nobody" })).toBe(null);
+    expect(findTower(index(), null)).toBe(null);
   });
 });
 

@@ -779,7 +779,7 @@ async function requestRepositoryRest(owner, name, cacheKey) {
     if (typeof globalThis !== "undefined" && typeof globalThis.__GO_REPORT === "function") {
       try {
         globalThis.__GO_REPORT(
-          `REST ${owner}/${name} -> ${res.status}${detail.replace(/^: /, " (").replace(/$/, ")")}`
+          `REST ${res.url || `${GITHUB_REST_URL}/repos/${owner}/${name}`} -> ${res.status}${detail.replace(/^: /, " (").replace(/$/, ")")}`
         );
       } catch {
         // A reporting hook must never be the reason a fetch fails.

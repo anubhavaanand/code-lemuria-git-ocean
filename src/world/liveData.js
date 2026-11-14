@@ -140,6 +140,36 @@ export function indexMockRepos(data) {
 }
 
 /**
+ * Find the standing tower a live record belongs to.
+ *
+ * The mock world owns the viewer's own repositories under the literal owner
+ * `"you"` — `makeRepo` defaults `owner: input.owner || "you"` and `YOUR_REPOS`
+ * never overrides it — while a live record from the real profile carries the
+ * real login, `anubhavaanand`. The two keys therefore never compared equal, so
+ * every record fell through to `skipped`, `adoptProfile` reported
+ * `updated: []`, and the HUD went on drawing mock numbers.
+ *
+ * This was invisible for a long time because it fails silently and looks like a
+ * network problem: the census showed the REST fetches returning 200 for three of
+ * the four repositories and still reported nothing adopted. The only honest
+ * signal was `skipped` naming exactly the three repositories that had just
+ * loaded.
+ *
+ * A name alone is not enough to match on, because a followed user's repository
+ * can share a name with one of the viewer's. So the owner is compared, with
+ * `"you"` treated as the alias it is for the viewer's own profile — and only
+ * there.
+ */
+export function findTower(index, record) {
+  if (!record || !record.name) return null;
+  const direct = index.get(`${record.owner || "you"}/${record.name}`);
+  if (direct) return direct;
+  // Fall back to the viewer's own repositories, which the mock world files
+  // under "you" whatever their real owner is.
+  return index.get(`you/${record.name}`) || null;
+}
+
+/**
  * Fold a profile's live records into the standing world.
  *
  * Returns `{ updated, skipped }`. `skipped` names the live records that had no
@@ -154,7 +184,7 @@ export function adoptIntoWorld(data, live) {
 
   for (const record of live || []) {
     const key = `${record.owner || "you"}/${record.name}`;
-    const repo = index.get(key);
+    const repo = findTower(index, record);
     if (!repo) {
       skipped.push(key);
       continue;

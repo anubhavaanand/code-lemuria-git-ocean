@@ -56,6 +56,7 @@ import {
 import {
   ADOPTABLE,
   applyLiveToRepo,
+  findTower,
   placementFor,
   worldRecordFromLive,
 } from "./liveData";
@@ -417,7 +418,12 @@ export class OceanWorld {
 
     for (const record of live || []) {
       const key = `${record.owner || "you"}/${record.name}`;
-      const repo = index.get(key);
+      // `findTower`, not `index.get(key)`. The mock world files the viewer's own
+      // repositories under the literal owner "you", while a live record carries
+      // the real login — so a direct lookup missed every one of them and the
+      // whole live pass reported `updated: []` while the REST calls beside it
+      // returned 200. See liveData.findTower.
+      const repo = findTower(index, record);
 
       if (!repo) {
         // The API knows a repository the world does not draw. Adding one is a
