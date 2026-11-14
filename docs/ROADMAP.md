@@ -34,19 +34,54 @@ one of them was found by measuring pixels rather than by looking at code.
 
 ### Build and deploy
 
-- Vite + React 18 + three.js, 46 modules.
+- Vite + React 18 + three.js, 62 modules, ~1.1 MB of JS (302 kB gzipped).
 - GitHub Pages deploy as **manual only** (`workflow_dispatch`), never on push —
   because a deploy on every commit is a deploy on every typo.
 - `base: "./"` so the build works on a project path.
 - Feature-grained commit history, each commit body explaining *why*.
 
-### API layer (built, not wired)
+### Performance
+
+- **Draw calls: 728 → 664** at city zoom, measured with `?debug=perf`. Growth
+  rings, the legacy fauna, and the kelp props are instanced; the stipe and the
+  tube worms stay per-tower because they animate (`cdf3c49`, `532b899`,
+  `766a489`, `bcc269d`).
+- **The frame profiler reports its own renderer.** Every fps this project measured
+  in headless Chrome came from SwiftShader, a CPU rasteriser — the number was
+  real and it was not the user's (`becbba1`).
+- **`/tmp` is a 5.8 GB tmpfs here, not the root filesystem.** A full tmpfs kills
+  the shell dead (`ENOSPC` on every command, no output, no exit status) while
+  the root has 55 GB free. The capture harness left ~4 GB of Chrome profiles
+  there; check `df -h / /tmp` separately.
+- **Cached responses persist to localStorage**, with `set()` refusing null: a
+  rate limit lasting an hour must not become a mock world lasting a day
+  (`3a89862`).
+
+### API layer (built, and now wired)
 
 `src/services/` contains the GitHub GraphQL layer and OAuth — `fetchRepository`,
 `fetchViewerAndRepos`, `fetchRepositories`, `fetchCommitStats`,
-`prefetchUserRepos`, `checkRateLimit`, a TTL cache, and an `AuthService`. It is
-complete and unused: the scene runs on mock data, because Phase 1's job is to
-prove the metaphor reads before it is populated.
+`prefetchUserRepos`, `checkRateLimit`, a TTL cache, and an `AuthService`.
+
+It was complete and unused for a while, because Phase 1's job was to prove the
+metaphor reads before it is populated. It is wired now: `loadProfile` runs on
+mount, the records land through `adoptProfile`, and the world re-derives the
+whale from the real commit count. What is left is not wiring but scale — one
+anonymous budget of sixty requests an hour covers a profile of four repositories
+and its enrichment, and a signed-in user gets 5,000 points, so the API path is
+correct and the anonymous one is a proof rather than a product.
+
+Three things that wiring taught, all of them fixed:
+
+- **React's StrictMode mounts twice in development.** The live pass ran twice per
+  page view, so four repositories cost eight requests. The cache now shares the
+  in-flight promise, not just the answer (`fab7dcc`).
+- **The enrichment asked for the repository's own body again.** Seven requests
+  per repository, one of them re-reading an answer the first pass already had,
+  against sixty an hour (`3b36dab`).
+- **A failed fetch was invisible.** The world falls back to mock data and looks
+  correct, and the console is only readable with the devtools open — so the
+  census now carries `liveIssues` (`f19b80a`, `fb1de41`).
 
 ---
 
