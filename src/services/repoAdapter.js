@@ -42,15 +42,20 @@ import { makeRepo } from "../world/worldData";
  * which returns the file's size in bytes. That is the only number worth calling
  * "README length".
  */
-function inferReadme(api) {
-  let score = 0.45;
-  if (api.description && api.description.length > 20) score += 0.12;
-  if (api.description && api.description.length > 80) score += 0.08;
-  if (api.homepage) score += 0.06;
-  if (api.license && api.license !== "UNLICENSED") score += 0.08;
-  if (api.topics && api.topics.length >= 3) score += 0.08;
-  if (api.releaseCount > 0) score += 0.06;
-  if (api.isArchived) score -= 0.15;
+export function inferReadme(api) {
+  // Start at zero and earn the score. A base of 0.45 meant a repository with no
+  // description, no homepage, no license, no topics and no releases still scored
+  // 0.45 — above the midpoint, so the brain coral read as well-developed on a
+  // repo that had told us nothing at all. A guess should not be able to look
+  // like a good result.
+  let score = 0;
+  if (api.description && api.description.length > 20) score += 0.3;
+  if (api.description && api.description.length > 80) score += 0.16;
+  if (api.homepage) score += 0.14;
+  if (api.license && api.license !== "UNLICENSED") score += 0.16;
+  if (api.topics && api.topics.length >= 3) score += 0.14;
+  if (api.releaseCount > 0) score += 0.1;
+  if (api.isArchived) score -= 0.3;
   return {
     readmeQuality: Math.max(0, Math.min(1, Number(score.toFixed(3)))),
     readmeLength: 900 + Math.round(score * 2600),
@@ -70,10 +75,14 @@ function inferReadme(api) {
  * magnitude, and under-reporting is better than inventing a number that drives
  * the whale's length wrongly.
  */
-function inferCommits(api) {
+export function inferCommits(api) {
   const kb = api.codebaseSize || 0;
   const age = api.ageDays || 0;
-  if (!kb && !age) return 0;
+  // A repository exists, so it has at least one commit. Returning 0 for an empty
+  // record reads as "no history at all", which is a different and wrong claim —
+  // and it would also make the kelp tower vanish rather than stand at its
+  // minimum height.
+  if (!kb && !age) return 1;
   // ~14 KB of tracked content per commit is a rough historical average for a
   // small-to-medium repository; a repo that is 10 MB has plausibly a few hundred.
   const fromSize = Math.round(kb / 14);
@@ -90,6 +99,8 @@ function inferCommits(api) {
  * @param {number} [opts.totalCommits] real commit count, if a REST call supplied it
  * @param {string} [opts.ciStatus]    success | failure | running | none
  * @param {Array}  [opts.contributors] REST contributor list, if fetched
+ * @param {object} [opts.enrich]      output of enrichmentToWorldFields, when the
+ *                                    second pass has run
  * @returns {object|null} a world repo record, or null when there is no repository
  */
 export function apiToWorldRepo(api, opts = {}) {
@@ -100,6 +111,14 @@ export function apiToWorldRepo(api, opts = {}) {
     ? opts.contributors.filter((c) => c && c.login && c.type !== "Bot").length
     : 0;
 
+  // The enrichment pass answers the seventeen questions the first query cannot.
+  // It is merged over the defaults rather than replacing them, because it is
+  // allowed to fail partway: a repository whose check-runs endpoint is
+  // rate-limited still wants its branch count, and `undefined` is not a value
+  // makeRepo should ever see.
+  const en = opts.enrich || {};
+  const take = (key, fallback) => (en[key] !== undefined && en[key] !== null ? en[key] : fallback);
+
   const world = makeRepo({
     name: api.name,
     owner: opts.owner || api.owner || "you",
@@ -108,15 +127,15 @@ export function apiToWorldRepo(api, opts = {}) {
     stars: api.stars || 0,
     forks: api.forks || 0,
     watchers: api.watchers || 0,
-    contributors: contributors || 1,
+    contributors: contributors || take("contributors", 1),
     openIssues: api.openIssues || 0,
     closedIssues: api.closedIssues || 0,
-    openPRs: api.openPRs || 0,
-    mergedPRs: api.mergedPRs || 0,
-    totalCommits: opts.totalCommits != null ? opts.totalCommits : inferCommits(api),
+    openPRs: take("openPRs", 0),
+    mergedPRs: take("mergedPRs", 0),
+    totalCommits: take("totalCommits", inferCommits(api)),
     commitFrequency: api.commitFrequency || 0,
     commitStreak: api.commitStreak || 0,
-    codebaseSize: api.codebaseSize || 0,
+    codebaseSize: take("codebaseSize", api.codebaseSize || 0),
     ageDays: api.ageDays || 0,
     isPrivate: !!api.isPrivate,
     isArchived: !!api.isArchived,
@@ -124,12 +143,12 @@ export function apiToWorldRepo(api, opts = {}) {
     pinned: !!api.pinned,
     license: api.license && api.license !== "UNLICENSED" ? api.license : "NOASSERTION",
     topics: api.topics || [],
-    ciStatus: opts.ciStatus || "none",
+    ciStatus: take("ciStatus", "none"),
     downloads: api.downloadCount || 0,
     homepage: api.homepage || "",
-    hasWiki: api.hasWiki !== false,
-    hasPages: !!api.hasPages,
-    hasChangelog: !!api.changelog,
+    hasWiki: take("hasWiki", true),
+    hasPages: take("hasPages", false),
+    hasChangelog: take("hasChangelog", false),
     releases: api.releaseCount || 0,
     preRelease: !!api.preRelease,
 
@@ -139,24 +158,27 @@ export function apiToWorldRepo(api, opts = {}) {
     // did not say either way; absence is the honest reading of an unfetched field,
     // and it is visible in the fauna census.
     readmeQuality: readme.readmeQuality,
-    readmeLength: readme.readmeLength,
-    branchCount: api.branchCount || 1,
+    readmeLength: take("readmeLength", readme.readmeLength),
+    branchCount: take("branchCount", 1),
     discussionsOpen: api.discussionsOpen || 0,
     discussionsClosed: api.discussionsClosed || 0,
-    hasContributing: !!api.hasContributing,
-    hasCodeOfConduct: !!api.hasCodeOfConduct,
-    hasIssueTemplate: !!api.hasIssueTemplate,
-    hasPRTemplate: !!api.hasPRTemplate,
-    hasProjects: !!api.hasProjects,
-    hasDownloadsEnabled: !!api.hasDownloadsEnabled,
-    securityScanning: !!api.securityScanning,
+    hasContributing: take("hasContributing", false),
+    hasCodeOfConduct: take("hasCodeOfConduct", false),
+    hasIssueTemplate: take("hasIssueTemplate", false),
+    hasPRTemplate: take("hasPRTemplate", false),
+    hasProjects: take("hasProjects", false),
+    hasDownloadsEnabled: take("hasDownloadsEnabled", false),
+    securityScanning: take("securityScanning", false),
   });
 
   // Not a world field, but the HUD's "inferred" note needs it and the world
-  // record is the one object the HUD is given.
+  // record is the one object the HUD is given. The enrichment can upgrade the
+  // length from an inference to a measurement; it cannot upgrade the quality,
+  // which is the one thing a byte count will never tell you.
   world.meta = {
-    readmeSource: readme.readmeSource,
+    readmeSource: en.readmeSource || readme.readmeSource,
     fromApi: true,
+    enriched: opts.enrich ? true : false,
   };
 
   return world;

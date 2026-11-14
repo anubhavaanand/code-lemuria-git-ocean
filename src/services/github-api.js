@@ -32,8 +32,8 @@ import { cache } from "./cache";
 // Configuration
 // ---------------------------------------------------------------------------
 
-const GITHUB_GRAPHQL_URL = "https://api.github.com/graphql";
-const GITHUB_REST_URL = "https://api.github.com";
+export const GITHUB_GRAPHQL_URL = "https://api.github.com/graphql";
+export const GITHUB_REST_URL = "https://api.github.com";
 
 // GitHub OAuth App config — populated from environment at build time.
 //
