@@ -116,3 +116,43 @@ describe("cache", () => {
     expect(cache.get("k")).toBe(1);
   });
 });
+
+describe("in-flight requests", () => {
+  beforeEach(() => {
+    globalThis.localStorage = fakeStore();
+  });
+
+  it("shares one request between two callers", async () => {
+    const { cache } = await import("../src/services/cache");
+    let started = 0;
+    const work = () =>
+      new Promise((resolve) => {
+        started++;
+        setTimeout(() => resolve({ ok: true }), 10);
+      });
+
+    const first = cache.begin("k", work());
+    const second = cache.pending("k");
+    expect(second).toBe(first);
+
+    const [a, b] = await Promise.all([first, second]);
+    expect(a).toEqual({ ok: true });
+    expect(b).toEqual({ ok: true });
+    expect(started).toBe(1);
+  });
+
+  it("forgets the request once it settles, so a failure can be retried", async () => {
+    const { cache } = await import("../src/services/cache");
+    const failed = cache.begin("bad", Promise.reject(new Error("no")));
+    expect(cache.pending("bad")).toBeTruthy();
+    await failed.catch(() => {});
+    expect(cache.pending("bad")).toBeUndefined();
+  });
+
+  it("does not let one key's request satisfy another", async () => {
+    const { cache } = await import("../src/services/cache");
+    const a = cache.begin("a", Promise.resolve(1));
+    expect(cache.pending("b")).toBeUndefined();
+    expect(await a).toBe(1);
+  });
+});

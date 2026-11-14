@@ -76,6 +76,39 @@ class Cache {
     this.store = new Map();
     this.persist = true;
     this._loaded = false;
+    /**
+     * Requests already in flight, by key.
+     *
+     * A cache that only remembers finished answers still lets two callers pay for
+     * the same request at once — and two callers happen on every load, because
+     * React's StrictMode mounts, unmounts and remounts in development, which runs
+     * the live pass twice. That is exactly the burst the anonymous budget cannot
+     * afford: sixty requests an hour, spent twice over on the first page view.
+     *
+     * The promise is cached rather than the value so a caller awaits the same
+     * round trip instead of starting a second one.
+     */
+    this.inflight = new Map();
+  }
+
+  /**
+   * Return the in-flight promise for a key, or undefined.
+   *
+   * Used by fetch paths that can share a request; the entry clears itself when
+   * the request settles, so a failure is never remembered as a result.
+   */
+  pending(key) {
+    return this.inflight.get(key);
+  }
+
+  /** Mark a request as in flight for a key. */
+  begin(key, promise) {
+    this.inflight.set(key, promise);
+    const clear = () => {
+      if (this.inflight.get(key) === promise) this.inflight.delete(key);
+    };
+    promise.then(clear, clear);
+    return promise;
   }
 
   /**
