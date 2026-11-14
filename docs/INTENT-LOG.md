@@ -134,22 +134,23 @@ update and the draw), and a guard on the rocks census that was throwing under
 
 ### What the measurements say to do next
 
-1. **Draw calls.** 657 of the city zoom's 728 calls belong to the non-whale
-   scene: 23 towers (7 named, 16 ambient) at roughly 30 calls each, being 7 kelp
-   sub-objects plus 15-20 legacy creature meshes plus creature clouds. These are
-   small repeated props sharing materials — the textbook case for merging or
-   instancing. This is the single biggest performance win available.
-2. **Interactivity depth.** GithubCity's entire interaction surface is a username
-   form, orbit controls, an auto-rotate toggle, a shadow slider and an STL export.
-   We already have picking, selection, a repo card, a legend, a zoom rail and
-   five levels; what we lack is the *layer* between "look at it" and "understand
-   it" — per-creature inspect, a codex, camera flights between related things.
-3. **Vision passes.** Still blocked on the VL route.
+1. **Draw calls.** Started at 728; now 533 after instancing the growth rings and
+   the legacy fauna. What is left: 23 towers (7 named, 16 ambient) at roughly 30
+   calls each — 7 kelp sub-objects each — plus creature clouds, obelisks, the
+   seafloor, rocks and the ocean layers. The next win is the kelp tower itself:
+   its seven sub-objects per tower are the largest remaining repeated cost.
+2. **Interactivity depth.** Done in this pass: selection, hover, per-creature
+   picking, the codex, a hover tooltip, an explore readout, keyboard stepping.
+   Still open: camera flights between related things — a tower, its whale, and
+   its colony are three views of one repo and nothing moves you between them
+   except the zoom rail.
+3. **Vision passes.** Still blocked on the VL route; numeric analysis has been
+   the substitute and has caught every real defect in this pass.
 
 ### State at the time this log was started
 
-- Last commit: 08481bf (screenshot refresh), preceded by ba4c971 (the whale
-  measurement fix). Both pushed to origin/main.
+- Last commit at the time of writing: dd831b6, preceded by 2efbb1a. All pushed
+  to origin/main.
 - Working tree clean.
 - Open from earlier: relay the Nemotron asset report (b14).
 
