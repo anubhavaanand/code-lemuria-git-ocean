@@ -730,10 +730,23 @@ export async function fetchRepositories(repos) {
  * arrive with the enrichment pass or not at all, and the world is built to treat
  * an absent field as absent.
  */
-export async function fetchRepositoryRest(owner, name) {
+export function fetchRepositoryRest(owner, name) {
   const cacheKey = `restrepo:${owner}/${name}`;
-  if (cache.has(cacheKey)) return cache.get(cacheKey);
+  if (cache.has(cacheKey)) return Promise.resolve(cache.get(cacheKey));
 
+  // Two callers ask for the same repository on every load: React's StrictMode
+  // mounts, unmounts and remounts in development, so the live pass runs twice.
+  // Sharing the in-flight request is what stops that doubling from spending
+  // twice the anonymous budget — sixty an hour, and two of them for one page view
+  // is the difference between a profile that loads and one that 403s.
+  const inFlight = cache.pending(cacheKey);
+  if (inFlight) return inFlight;
+
+  const promise = requestRepositoryRest(owner, name, cacheKey);
+  return cache.begin(cacheKey, promise);
+}
+
+async function requestRepositoryRest(owner, name, cacheKey) {
   const res = await fetch(`${GITHUB_REST_URL}/repos/${owner}/${name}`, {
     headers: {
       Accept: "application/vnd.github+json",
@@ -742,6 +755,18 @@ export async function fetchRepositoryRest(owner, name) {
   });
 
   if (!res.ok) {
+    // Reported here as well as in the console, because the console is only
+    // readable with the devtools open and this failure is invisible otherwise:
+    // the world falls back to mock data and looks correct. A 404 means the name
+    // the caller asked for is wrong, and that is a data bug, not a network one —
+    // worth surfacing where someone will see it.
+    if (typeof globalThis !== "undefined" && typeof globalThis.__GO_REPORT === "function") {
+      try {
+        globalThis.__GO_REPORT(`REST ${owner}/${name} -> ${res.status}`);
+      } catch {
+        // A reporting hook must never be the reason a fetch fails.
+      }
+    }
     // Read the body before warning, because the status alone conflates two
     // different situations and only one of them is worth retrying: a 403 from the
     // rate limiter and a 404 for a repository that does not exist both look like

@@ -27,6 +27,15 @@ import "./index.css";
 export default function App() {
   const containerRef = useRef(null);
   const worldRef = useRef(null);
+  /**
+   * Failures from the live-data pass that are worth seeing outside the console.
+   *
+   * A failed fetch is invisible in the picture — the world falls back to mock
+   * data and looks correct — and the console is only readable with the devtools
+   * open, which a screenshot pass does not have. A ref rather than state: the
+   * census reads it every second and a re-render would buy nothing.
+   */
+  const liveIssuesRef = useRef([]);
 
   const [world, setWorld] = useState(null);
   const [selectedRepo, setSelectedRepo] = useState(null);
@@ -806,6 +815,9 @@ export default function App() {
         }
         // Frame budget. Only populated when the profiler was switched on, so
         // an ordinary census costs one property read.
+        if (liveIssuesRef.current.length) {
+          payload.liveIssues = liveIssuesRef.current.slice();
+        }
         if (wantsPerfReport) {
           payload.perf = instance.profiler.report();
           // Without the renderer name a frame rate is unreadable: software
@@ -845,6 +857,16 @@ export default function App() {
     // the second pass, which costs six requests per repository.
     const params = new URLSearchParams(window.location.search);
     const skipLive = params.get("mock") === "1";
+
+    // Failures worth seeing outside the devtools. The console is not readable in
+    // a screenshot pass, and a failed fetch is invisible in the picture: the
+    // world falls back to mock data and looks correct. Collected here and put in
+    // the census when one is being emitted.
+    window.__GO_REPORT = (line) => {
+      const list = liveIssuesRef.current;
+      list.push(line);
+      if (list.length > 40) list.shift();
+    };
     let cancelled = false;
 
     if (!skipLive) {
@@ -891,6 +913,7 @@ export default function App() {
     return () => {
       cancelled = true;
       if (debugTimer) clearInterval(debugTimer);
+      if (window.__GO_REPORT) delete window.__GO_REPORT;
       window.removeEventListener("resize", onResize);
       if (ro) ro.disconnect();
       instance.dispose();
