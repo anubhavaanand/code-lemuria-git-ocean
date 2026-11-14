@@ -193,7 +193,11 @@ let _repoId = 0;
 
 export function makeRepo(input) {
   const repo = {
-    id: `repo_${++_repoId}`,
+    // A caller may supply a stable id (the API path does: `owner/name`). Only a
+    // record with none gets a counter — a counter-based id cannot survive a page
+    // load, and `entries` is keyed on it, so every reload would rename every
+    // tower and make a selected entry unreachable.
+    id: input.id || `repo_${++_repoId}`,
     name: input.name,
     owner: input.owner || "you",
     description: input.description || "",

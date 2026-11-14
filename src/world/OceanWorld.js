@@ -45,9 +45,20 @@ import {
   buildWorld,
   CAPITAL_CLUSTERS,
   hashString,
+  languageStyle,
+  makeRng,
   LANGUAGE_COLONIES,
   YOU,
 } from "./worldData";
+// The live-data seam: folding API records into a world that is already standing.
+// Kept out of this file because it is about *data*, not about the scene, and it
+// can be tested without a renderer.
+import {
+  ADOPTABLE,
+  applyLiveToRepo,
+  placementFor,
+  worldRecordFromLive,
+} from "./liveData";
 import { OceanEnvironment, createFog, depthBackground } from "./OceanEnvironment";
 import { Seafloor, seafloorHeightAt } from "./Seafloor";
 import { KelpTower } from "./KelpTower";
@@ -372,9 +383,328 @@ export class OceanWorld {
     this._addAmbientTowers();
   }
 
-  _addRepoTowers(repos, opts) {
-    const creatureOpts = { quality: this.quality, isMobile: this.isMobile };
+  // =========================================================================
+  // Live data
+  // =========================================================================
 
+  /**
+   * Fold a profile's live records into the world that is already standing.
+   *
+   * This is the seam where the API arrives. It runs after the first frame, not
+   * before it, because blocking scene assembly on a network request is how a
+   * world ends up blank behind a spinner — and because the mock data exists
+   * precisely so there is always something to look at.
+   *
+   * A tower keeps its id, its position and its height when its numbers change.
+   * Re-deriving any of them would move the world under a user who is looking at
+   * it, and `id` is what a click refers to.
+   *
+   * @param {Array} live  world records from loadProfile
+   * @returns {{updated: string[], skipped: string[]}}
+   */
+  adoptProfile(live) {
+    const index = new Map();
+    for (const repo of this.data.yourRepos || []) {
+      index.set(`${repo.owner}/${repo.name}`, repo);
+    }
+    for (const repo of this.data.following || []) {
+      index.set(`${repo.owner}/${repo.name}`, repo);
+    }
+
+    const updated = [];
+    const skipped = [];
+
+    for (const record of live || []) {
+      const key = `${record.owner || "you"}/${record.name}`;
+      const repo = index.get(key);
+
+      if (!repo) {
+        // The API knows a repository the world does not draw. Adding one is a
+        // larger change than updating one — it needs a district, a place in the
+        // layer stack and geometry — so it is reported rather than done
+        // silently. A user should see that their profile grew.
+        skipped.push(key);
+        continue;
+      }
+
+      applyLiveToRepo(repo, record);
+
+      // The whale's length is derived from codebase size and the camera framing
+      // is derived from the whale. Updating only the record would leave the
+      // animal the old size while the HUD reported the new one.
+      const entry = this.entries.get(repo.id);
+      if (entry && entry.whale && typeof entry.whale.applyRepo === "function") {
+        entry.whale.applyRepo(repo);
+      }
+
+      // The HUD holds the repo object it was given, so if this is the selected
+      // tower it has to be handed a fresh reference: the scene mutated the old
+      // one in place and React cannot see a mutation. The fauna rides along,
+      // because the copy otherwise drops `__fauna` and the card's creature list
+      // empties the moment the real numbers arrive.
+      if (this.selectedId === repo.id) {
+        this.onSelect(
+          Object.assign({}, repo, {
+            __fauna: this.selectedFauna,
+            __creature: this.selectedCreature || null,
+            __live: true,
+          })
+        );
+      }
+
+      updated.push(key);
+    }
+
+    if (updated.length) this._refreshStats();
+    return { updated, skipped };
+  }
+
+  /**
+   * Recompute the header totals from the towers that are actually standing.
+   *
+   * `worldData.stats` is derived from the mock set at construction, so once live
+   * records land the header would report mock star counts next to real ones. The
+   * ambient mass is excluded — it is scenery by design, and counting it as
+   * repositories the user owns is the one number in the HUD that is knowingly
+   * fiction.
+   */
+  _refreshStats() {
+    const named = [];
+    for (const repo of this.data.yourRepos || []) named.push(repo);
+    for (const repo of this.data.following || []) named.push(repo);
+
+    // The language tally is an authored ranking for the mock world; recompute it
+    // the same way `countLanguages` does so a live profile changes it correctly.
+    const counts = new Map();
+    for (const repo of named) {
+      counts.set(repo.language, (counts.get(repo.language) || 0) + 1);
+    }
+    const languages = Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([language, count]) => ({
+        language,
+        count,
+        // The HUD colours each chip from `style`; a tally built without it
+        // renders every chip uncoloured, which reads as a bug in the language
+        // list rather than as a missing field.
+        style: languageStyle(language),
+      }));
+
+    this.data.stats = {
+      totalRepos: named.length + (this.data.ambient || []).length,
+      totalStars: named.reduce((sum, r) => sum + (r.stars || 0), 0),
+      totalContributors: named.reduce((sum, r) => sum + (r.contributors || 0), 0),
+      languages,
+      // Carried through rather than dropped: the HUD renders a language's colour
+      // from `style`, and rebuilding the tally without it would render every
+      // chip uncoloured.
+      liveRepos: named.length,
+      mocked: false,
+    };
+  }
+
+  /**
+   * Adopt a single live record, for the fly-to path.
+   *
+   * The tower already exists for a repository the user follows, so this is the
+   * update case. For one the world has never heard of it adds a tower, because
+   * flying to something that is not there is worse than not offering the trip.
+   */
+  adoptOne(record) {
+    if (!record) return false;
+    const result = this.adoptProfile([record]);
+    if (result.updated.length) return true;
+    // Not in the world yet: flying to something that is not there is worse than
+    // not offering the trip, so the tower is added rather than dropped.
+    if (result.skipped.length) return this.addTower(record);
+    return false;
+  }
+
+  /**
+   * Attach the fauna, the whale and its orbital cloud to one entry.
+   *
+   * The shared half of `addTower` and `_addRepoTowers`. One method because the
+   * order matters: the whale's orbit is derived from the tower's height and root
+   * position, so the tower must already be placed. A second copy of this wiring
+   * would be a second place for a creature to be silently skipped.
+   */
+  _populateEntry(entry, repo, opts) {
+    const tower = entry.tower;
+
+    // Legacy creatures live on the tower itself, so they exist whether or not
+    // this repo earned a whale. Ambient towers deliberately skip them: the
+    // anonymous mass of GitHub gets silhouette, not detail.
+    if (opts.withLegacy) {
+      const legacy = new LegacyColony(repo, {
+        tower,
+        quality: this.quality,
+        isMobile: this.isMobile,
+      });
+      tower.group.add(legacy.group);
+      entry.legacy = legacy;
+      entry.fauna = legacy.creatures;
+      this.legacy.push(legacy);
+    }
+
+    if (!opts.withWhales) return;
+
+    // WhaleWithSculpt is a RepoWhale: same swim cycle, same data-bearing parts,
+    // only the silhouette may differ. Species without an imported model (blue,
+    // bowhead, sperm, orca) get the procedural lathe and never know it.
+    const whale = new WhaleWithSculpt(repo, {
+      quality: this.quality,
+      isMobile: this.isMobile,
+    });
+
+    // Kick the load without blocking scene assembly: the procedural body is
+    // already in the scene and animating, so a whale is visible immediately and
+    // a fast network swaps in the sculpt a moment later. A failed load leaves
+    // the lathe, which is the correct fallback, not an error state.
+    if (WhaleWithSculpt.hasSculpt(repo) && !this.isMobile && !this.suppressSculpt) {
+      whale.adoptSculpt().then((ok) => {
+        if (ok) this.pendingCredits.push(whale.sculptCredit);
+      });
+    }
+
+    const pos = repo.position || [0, 0];
+    const zBase = opts.zBase != null ? opts.zBase : LAYERS.kelpForestMid;
+    const cx = pos[0];
+    const cz = zBase + pos[1];
+
+    // Orbit radius is capped. Without a cap a flagship tower (160+ units) pushed
+    // its whale 130 units out, further than the whale level's camera sits from
+    // the tower — so the animal spent most of its orbit off the edge of the
+    // frame. A cap keeps every repo's whale inside the lens while preserving the
+    // rule that bigger repos orbit wider.
+    const orbitR = Math.min(tower.height * 0.7 + 16, 62);
+    // Orbit height must be measured from the tower's ROOT, not from y=0,
+    // otherwise a tower standing in a trough had its whale circling somewhere
+    // inside the sediment.
+    const cy = tower.group.position.y + tower.height * 0.58;
+
+    // The starting phase is authored, not random, so that a screenshot and a
+    // geometry census are taken of the same frame. A random phase makes every
+    // page load a different picture, which is how a QA pass measuring pixels in
+    // one run and reading coordinates from another concludes the whale is missing.
+    //
+    // PI/2 specifically, not just any fixed value. The whale's heading is the
+    // orbit's tangent, so at phase PI/2 it travels along -X while the camera
+    // looks along +Z — the animal crosses the frame broadside, which is the only
+    // orientation in which a body plan (head, taper, flukes, flippers) is legible.
+    // At PI*0.75 the same animal swims away from the lens at 45 degrees and reads
+    // as a shapeless mass.
+    const startPhase = Math.PI * 0.5;
+
+    whale.group.position.set(
+      cx + Math.cos(startPhase) * orbitR,
+      cy,
+      cz + Math.sin(startPhase) * orbitR
+    );
+    this.scene.add(whale.group);
+
+    entry.whale = whale;
+    entry.whaleOrbit = {
+      cx,
+      cz,
+      r: orbitR,
+      y: cy,
+      phase: startPhase,
+      // Deterministic per repo, not Math.random(). With a random speed the phase
+      // at load time differed between two identical page loads by enough to move
+      // the animal visibly along its orbit.
+      speed: 0.055 + (hashString(repo.id) % 50) / 1000,
+    };
+    this.whales.push({ whale, entry, orbit: entry.whaleOrbit });
+
+    if (opts.withCreatures) {
+      const system = new CreatureSystem(repo, {
+        quality: this.quality,
+        isMobile: this.isMobile,
+      });
+      const sysGroup = new THREE.Group();
+      sysGroup.add(system.group);
+      sysGroup.position.set(cx, cy, cz);
+      this.scene.add(sysGroup);
+
+      entry.creatures = system;
+      entry.creatureHolder = sysGroup;
+      entry.creatureOrbit = entry.whaleOrbit;
+      this.creatureSystems.push({
+        system,
+        entry,
+        orbit: entry.creatureOrbit,
+        holder: sysGroup,
+      });
+    }
+  }
+
+  /**
+   * Add one tower to the standing world, with the same treatment as a followed repo.
+   *
+   * The path `adoptOne` takes for a repository the world has never drawn.
+   *
+   * @returns {boolean} whether a tower was added
+   */
+  addTower(repo, opts = {}) {
+    if (!repo || !repo.name || !repo.id) return false;
+    if (this.entries.has(repo.id)) return false;
+
+    // `makeRepo` is the single constructor the scene trusts: it derives the
+    // species and fills every creature default. Building a record by hand would
+    // mean two places to change when a creature is added.
+    const record = worldRecordFromLive(repo);
+    if (!record) return false;
+
+    // The new tower joins `yourRepos` so the header's totals and the language
+    // tally count it. Without this it would exist in the scene and in `entries`
+    // but nowhere the HUD reads, which is a tower that renders and does not
+    // count.
+    if (!this.data.yourRepos.includes(record)) this.data.yourRepos.push(record);
+    this._refreshStats();
+
+    // A new repository has no authored position, so it is placed in the district
+    // of its language with a seeded scatter — reproducible for a given repo, so
+    // two loads agree and a screenshot matches a census.
+    const rng = makeRng(hashString(record.id));
+    const pos = record.position || placementFor(record, rng, this.you || null);
+    record.position = pos;
+    if (record.depth == null) record.depth = this.you ? this.you.depth : -520;
+
+    const zBase = opts.zBase != null ? opts.zBase : LAYERS.kelpForestFar;
+
+    const tower = new KelpTower(record, {
+      quality: this.quality,
+      isMobile: this.isMobile,
+    });
+    const tx = pos[0];
+    const tz = zBase + pos[1];
+    tower.group.position.set(tx, seafloorHeightAt(tx, tz), tz);
+    tower.group.scale.setScalar(opts.scale != null ? opts.scale : 0.9);
+    this.scene.add(tower.group);
+
+    const entry = {
+      repo: record,
+      tower,
+      whale: null,
+      creatures: null,
+      legacy: null,
+      whaleOrbit: null,
+      kind: "repo",
+    };
+    this.entries.set(record.id, entry);
+    this.towers.push({ tower, repo: record, entry });
+    this.pickables.push(tower.group);
+
+    this._populateEntry(entry, record, {
+      zBase,
+      withWhales: !this.isMobile && opts.withWhales !== false,
+      withCreatures: !this.isMobile && opts.withCreatures !== false,
+      withLegacy: !this.isMobile && opts.withLegacy !== false,
+    });
+    return true;
+  }
+
+  _addRepoTowers(repos, opts) {
     for (const repo of repos) {
       const pos = repo.position || [0, 0];
       const tower = new KelpTower(repo, {
@@ -407,122 +737,7 @@ export class OceanWorld {
       this.towers.push({ tower, repo, entry });
       this.pickables.push(tower.group);
 
-      // Legacy creatures live on the tower itself, so they exist whether or not
-      // this repo earned a whale. Ambient towers deliberately skip them: the
-      // anonymous mass of GitHub gets silhouette, not detail.
-      if (opts.withLegacy) {
-        const legacy = new LegacyColony(repo, {
-          tower,
-          quality: this.quality,
-          isMobile: this.isMobile,
-        });
-        tower.group.add(legacy.group);
-        entry.legacy = legacy;
-        entry.fauna = legacy.creatures;
-        this.legacy.push(legacy);
-      }
-
-      if (opts.withWhales) {
-        // WhaleWithSculpt is a RepoWhale: same swim cycle, same data-bearing
-        // parts, only the silhouette may differ. Species without an imported
-        // model (blue, bowhead, sperm, orca) get the procedural lathe and never
-        // know the difference.
-        const whale = new WhaleWithSculpt(repo, {
-          quality: this.quality,
-          isMobile: this.isMobile,
-        });
-
-        // Kick the load without blocking scene assembly: the procedural body is
-        // already in the scene and animating, so a whale is visible immediately
-        // and a fast network swaps in the sculpt a moment later. A failed load
-        // leaves the lathe, which is the correct fallback, not an error state.
-        if (WhaleWithSculpt.hasSculpt(repo) && !this.isMobile) {
-          // `?nosculpt=1` keeps the procedural body so a screenshot pair can be
-          // diffed. Without a way to suppress the sculpt there is no way to tell
-          // "the whale is not drawn" from "the whale is drawn but unreadable":
-          // an earlier diff appeared to show 37,052 changed pixels, but the flag
-          // it relied on never existed, so both captures were the same frame and
-          // the difference was water animation.
-          const suppress = this.suppressSculpt;
-          if (!suppress) {
-            whale.adoptSculpt().then((ok) => {
-              if (ok) this.pendingCredits.push(whale.sculptCredit);
-            });
-          }
-        }
-
-        // Orbit radius is capped. Without a cap a flagship tower (160+ units)
-        // pushed its whale 130 units out, further than the whale level's camera
-        // sits from the tower — so the animal spent most of its orbit off the
-        // edge of the frame. A cap keeps every repo's whale inside the lens
-        // while preserving the rule that bigger repos orbit wider.
-        const orbitR = Math.min(tower.height * 0.7 + 16, 62);
-        // Orbit height must be measured from the tower's ROOT, not from y=0,
-        // otherwise a tower standing in a trough had its whale circling
-        // somewhere inside the sediment.
-        const cy = tower.group.position.y + tower.height * 0.58;
-        const cx = pos[0];
-        const cz = opts.zBase + pos[1];
-
-        // The starting phase is authored, not random, so that a screenshot and
-        // a geometry census are taken of the same frame. A random phase makes
-        // every page load a different picture, which is how a QA pass measuring
-        // pixels in one run and reading coordinates from another concludes the
-        // whale is missing.
-        //
-        // PI/2 specifically, not just any fixed value. The whale's heading is
-        // the orbit's tangent, so at phase PI/2 it travels along -X while the
-        // camera looks along +Z — the animal crosses the frame broadside, which
-        // is the only orientation in which a body plan (head, taper, flukes,
-        // flippers) is legible. At PI*0.75 the same animal swims away from the
-        // lens at 45 degrees and reads as a shapeless mass, which is exactly
-        // what a QA pass reported when the whale was demonstrably being drawn
-        // (37,052 pixels changed with the sculpt hidden).
-        const startPhase = Math.PI * 0.5;
-
-        whale.group.position.set(
-          cx + Math.cos(startPhase) * orbitR,
-          cy,
-          cz + Math.sin(startPhase) * orbitR
-        );
-        this.scene.add(whale.group);
-
-        entry.whale = whale;
-        entry.whaleOrbit = {
-          cx,
-          cz,
-          r: orbitR,
-          y: cy,
-          phase: startPhase,
-          // Deterministic per repo, not Math.random(). With a random speed the
-          // phase at load time differed between two identical page loads by
-          // enough to move the animal visibly along its orbit — measured as
-          // three captures of one frozen URL giving 29,572 / 60,848 / 61,072 lit
-          // pixels, i.e. two frames matched to 1,924 px and a third that was a
-          // different picture. Deriving the speed from the repo id keeps "bigger
-          // repos orbit faster" while making the frame reproducible.
-          speed: 0.055 + (hashString(repo.id) % 50) / 1000,
-        };
-        whale.group.position.set(
-          cx + Math.cos(startPhase) * orbitR,
-          cy,
-          cz + Math.sin(startPhase) * orbitR
-        );
-        this.whales.push({ whale, entry, orbit: entry.whaleOrbit });
-
-        if (opts.withCreatures) {
-          const system = new CreatureSystem(repo, creatureOpts);
-          const sysGroup = new THREE.Group();
-          sysGroup.add(system.group);
-          sysGroup.position.set(cx, cy, cz);
-          this.scene.add(sysGroup);
-
-          entry.creatures = system;
-          entry.creatureHolder = sysGroup;
-          entry.creatureOrbit = entry.whaleOrbit;
-          this.creatureSystems.push({ system, entry, orbit: entry.creatureOrbit, holder: sysGroup });
-        }
-      }
+      this._populateEntry(entry, repo, opts);
     }
   }
 

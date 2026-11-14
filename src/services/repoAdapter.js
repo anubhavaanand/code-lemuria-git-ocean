@@ -181,6 +181,29 @@ export function apiToWorldRepo(api, opts = {}) {
     enriched: opts.enrich ? true : false,
   };
 
+  // A STABLE id, which `makeRepo` cannot supply from the API path.
+  //
+  // `makeRepo` assigns `repo_1`, `repo_2` in call order and only keeps an id the
+  // caller passed in when the record has none — so an API record's own id is
+  // always overwritten, and the same repository gets a different id on every page
+  // load. `worldRecordFromLive` restores it afterwards, but the id has to be
+  // stable here too: `apiToWorldRepo` is called directly by the enrichment fold
+  // and by `loadOne`, and a record whose id changes between those calls cannot be
+  // matched to the tower the scene already keyed on it.
+  //
+  // This matters because ids are keys, not labels. The scene's `entries` map is
+  // keyed by id, picking resolves an id, `?focus=` matches one, and `select()`
+  // compares one. A counter-based id means a reload renames every tower: a
+  // selected entry becomes unreachable, a fly-to that resolved yesterday misses,
+  // and the mock set's `repo_N` ids collide with the live ones' — which is the
+  // failure that actually bites, because `adoptProfile` matches live records to
+  // standing towers by owner and name and then keys `entries` on the id.
+  //
+  // `owner/name` is unique on GitHub by construction, so it is the one derived
+  // value that is both stable and correct.
+  world.id = `${world.owner}/${world.name}`;
+  world.meta.source = "github";
+
   return world;
 }
 
