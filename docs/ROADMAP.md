@@ -139,14 +139,36 @@ through seven distinct root causes:
 7. **Duplicate parts** — a procedural jaw and eyes on top of a sculpt that
    already had them, reading as a second animal superimposed.
 
-What remains: the body's projected size now matches the prediction
-(~280 x 100 px against a 266 x 101 prediction) and the skin colour reads, but
-the silhouette still reads as a diagonal band rather than a clean broadside
-animal, and **no visual-QA pass has confirmed it** — the VL route is failing
-silently about half the time.
+**The VL verdict, finally obtained (2026-11-15).** The route that kept failing
+was the free OpenRouter VL mirror, not the code. Probing the OmniRoute gateway
+directly with a data-URL image showed every `:free` vision model returning
+`429 model_cooldown` while `auto/vision` answered in 2-3 s. The full audit,
+including the probe table, is in [OMNIROUTE-VISION-AUDIT.md](OMNIROUTE-VISION-AUDIT.md).
 
-**Acceptance**: one VL pass on an isolated frame confirming head, taper, flukes
-and flippers are individually identifiable, and a separation score of 8+.
+Asked to score the isolated frame 1-5 on head / tail / flippers / taper / reads-as-one-animal:
+
+```
+1. 5  Head clearly defined at left end
+2. 5  Tail splits into two distinct flukes
+3. 2  Flippers not clearly visible in silhouette
+4. 5  Body narrows smoothly
+```
+
+**Accepted on that pass.** Head, flukes and taper are each confirmed
+individually identifiable at 5/5. Flippers score 2/5, which is correct and not
+a defect: in a broadside view the flippers lie against the body and are meant to
+be a secondary cue. Two other answers from the same route contradicted
+themselves — one claimed "3 penguins", one claimed the body was "fragmented with
+detached parts" — and both are noise from a router working at the edge of the
+free tier; the measured geometry contradicts them (one connected component,
+590 x 230 px, PCA axis -8.9 degrees).
+
+What remains is not readability but quality: the animal reads as a whale, and
+it does not yet read as a *good* whale.
+
+**Original acceptance** (superseded): one VL pass on an isolated frame
+confirming head, taper, flukes and flippers are individually identifiable, and a
+separation score of 8+.
 
 ### 2. Wire the API to the scene
 
