@@ -742,10 +742,21 @@ export async function fetchRepositoryRest(owner, name) {
   });
 
   if (!res.ok) {
-    // 403 here is the rate limit, and it is the one failure worth being loud
-    // about: it looks identical to "this repository does not exist" from the
-    // caller's point of view, and only one of those is worth retrying.
-    console.warn(`REST repository ${owner}/${name} -> ${res.status}`);
+    // Read the body before warning, because the status alone conflates two
+    // different situations and only one of them is worth retrying: a 403 from the
+    // rate limiter and a 404 for a repository that does not exist both look like
+    // "no data" to a caller, and a 403 from the rate limiter is the one that
+    // resolves itself in an hour.
+    let detail = "";
+    try {
+      const body = await res.clone().json();
+      if (body && body.message) detail = `: ${body.message}`;
+    } catch {
+      // A non-JSON error body is not worth parsing further.
+    }
+    console.warn(
+      `REST repository ${owner}/${name} -> ${res.status}${detail}`
+    );
     return null;
   }
 
