@@ -280,7 +280,12 @@ export const YOU = {
 /** Your own repos, placed in your language district. */
 export const YOUR_REPOS = [
   makeRepo({
-    name: "git-ocean",
+    // The repository's real name, not the project's. `git-ocean` is what this
+    // project is called; the repository is `code-lemuria-git-ocean`, and the
+    // first pass asks GitHub for the name it is given. Asking for the wrong one
+    // gets a 404, which is indistinguishable from a repository that does not
+    // exist — so the world would quietly keep its mock numbers.
+    name: "code-lemuria-git-ocean",
     description: "Your GitHub as an underwater 3D world — repos become whales, stars become dinoflagellates.",
     language: "JavaScript",
     stars: 142,
