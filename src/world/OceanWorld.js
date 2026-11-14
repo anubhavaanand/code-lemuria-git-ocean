@@ -660,6 +660,7 @@ export class OceanWorld {
 
     if (!repoId) {
       this.focusPoint = null;
+      this.selectedFauna = null;
       if (this.marker) this.marker.setSelected(null);
       this.onSelect(null);
       return;
@@ -667,10 +668,17 @@ export class OceanWorld {
 
     const entry = this.entries.get(repoId);
     if (!entry) {
+      this.selectedFauna = null;
       if (this.marker) this.marker.setSelected(null);
       this.onSelect(null);
       return;
     }
+
+    // Kept on the world as well as passed to the HUD. The HUD gets the fauna
+    // folded into a copy of the repo so it has one object to render; but a
+    // lookup from the world — a keyboard shortcut, a QA probe — needs to reach
+    // it without going through React state.
+    this.selectedFauna = entry.fauna || null;
 
     // Draw the mark before the camera moves, so the frame the camera settles on
     // already has the selected tower ringed rather than the ring appearing a
