@@ -1,0 +1,26 @@
+# Git Ocean — token exchange worker
+#
+# This worker exists to hold one thing the browser must not: the GitHub OAuth
+# client secret. The SPA can start a flow; it cannot finish one.
+#
+# Deploy with `npx wrangler deploy` from this directory. Secrets are NOT set
+# here — a committed secret is not a secret:
+#
+#     npx wrangler secret put GITHUB_CLIENT_ID
+#     npx wrangler secret put GITHUB_CLIENT_SECRET
+#     npx wrangler secret put ALLOWED_ORIGINS     # optional, comma separated
+#
+# Local development reads the same names from worker/.dev.vars, which is
+# gitignored.
+
+name = "git-ocean-auth"
+main = "src/index.js"
+compatibility_date = "2026-11-01"
+
+# The SPA is a folder of static files on GitHub Pages; the worker is the only
+# part that needs a machine of its own. Keep it on a workers.dev subdomain until
+# a custom domain exists, so the Pages deploy stays independent of this one.
+workers_dev = true
+
+[observability]
+enabled = true

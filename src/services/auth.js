@@ -125,10 +125,20 @@ class AuthService {
         ? `${window.location.origin}/api/auth/token`
         : "/api/auth/token";
 
+    // The worker rejects a code that does not carry the `state` it minted in
+    // /api/auth/start, and GitHub echoes that value back on the callback URL.
+    // Without it the endpoint would be a code-injection oracle: anyone could
+    // POST a code of their choosing and bind it to a victim's session.
+    const params = new URLSearchParams(
+      typeof window !== "undefined" ? window.location.search : ""
+    );
+    const state = params.get("state") || "";
+
     const response = await fetch(tokenExchangeUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code }),
+      credentials: "include",
+      body: JSON.stringify({ code, state }),
     });
 
     if (!response.ok) {

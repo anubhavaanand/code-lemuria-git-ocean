@@ -35,10 +35,17 @@ import { cache } from "./cache";
 const GITHUB_GRAPHQL_URL = "https://api.github.com/graphql";
 const GITHUB_REST_URL = "https://api.github.com";
 
-// GitHub OAuth App config — populated from environment at build time
-// These must be set in .env or wrangler.jsonc/.dev.vars before deployment
+// GitHub OAuth App config — populated from environment at build time.
+//
+// CLIENT_ID is public by design: it appears in the authorize URL and is meant to
+// be visible. CLIENT_SECRET is the opposite, and it used to be read here from a
+// VITE_ variable — which Vite inlines into the browser bundle, making it public
+// too. It is deliberately gone: the code-for-token exchange happens in
+// worker/src/index.js, which runs on Cloudflare and holds the secret as a
+// worker secret rather than as a build-time constant.
+//
+// Do not add it back here. Anything in this file ships to every visitor.
 const GITHUB_CLIENT_ID = import.meta.env.VITE_GITHUB_CLIENT_ID || "";
-const GITHUB_CLIENT_SECRET = import.meta.env.VITE_GITHUB_CLIENT_SECRET || "";
 
 // ---------------------------------------------------------------------------
 // OAuth Helpers

@@ -12,6 +12,8 @@ dist-ssr
 .env.local
 .env.*.local
 .dev.vars
+# worker/.dev.vars.example IS committed: it documents the names without the values.
+!worker/.dev.vars.example
 
 # Cloudflare / wrangler local state
 .wrangler
