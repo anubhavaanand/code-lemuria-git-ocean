@@ -209,10 +209,22 @@ export class RepoWhale {
 
     // Lathe runs along Y; rotate so the body runs along X (nose at +X)
     geo.rotateZ(-Math.PI / 2);
-    geo.translate(-this.length * 0.5, 0, 0);
 
-    // Scale: length along X, girth on Y/Z
+    // Scale first, THEN centre — and the order is not interchangeable.
+    //
+    // Every BufferGeometry transform post-multiplies: `geo.scale(L, G, G)` then
+    // `geo.translate(-L/2, 0, 0)` means "scale the unit body, then shift it by
+    // half a body". The reverse order means "shift it by half a *unit* body,
+    // then scale that shift too", which moves the body by L/2 * L. For a 48.8
+    // unit animal that is -1,166 units: the geometry ends up centred at
+    // x = -1,166 instead of x = 0, and the group's bounding box measures
+    // 1,236 x 50.2 x 19.4 against a body that is 48.8 x 19.4 x 19.4.
+    //
+    // The camera framing is solved from that box, so the bug did not merely
+    // displace a mesh — it made `focusLength` 25x too large and the whale zoom
+    // framed empty water while the animal swam off-screen.
     geo.scale(this.length, this.girth, this.girth);
+    geo.translate(-this.length * 0.5, 0, 0);
 
     this.skinUniforms = {
       uColorDorsal: { value: new THREE.Color(this.species.color) },
