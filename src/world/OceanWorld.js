@@ -56,6 +56,7 @@ import { CreatureSystem, AmbientSchool } from "./CreatureGeometry";
 import { LegacyColony } from "./LegacyCreatures";
 import { SonarObelisk, buildClusterLights } from "./SonarObelisk";
 import { CameraRig } from "./CameraRig";
+import { SelectionMarker } from "./SelectionMarker";
 import { FrameProfiler, NOOP_PROFILER } from "./perf";
 
 const isMobileDevice = () =>
@@ -566,6 +567,12 @@ export class OceanWorld {
     this.raycaster = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
 
+    // Selection and hover marks. Constructed here because they need the scene,
+    // which exists by now, and because `select()` below writes to them — before
+    // this the selected id was recorded and never drawn, so clicking a tower
+    // moved the camera but left the world saying nothing about which one.
+    this.marker = new SelectionMarker(this.scene);
+
     this._onPointerDown = (e) => {
       this._downAt = { x: e.clientX, y: e.clientY, t: performance.now() };
     };
@@ -581,35 +588,69 @@ export class OceanWorld {
       // A drag is a look, not a click. Only a short, still press counts.
       if (dist > 6 || dt > 500) return;
 
-      const rect = this.renderer.domElement.getBoundingClientRect();
-      if (!rect.width || !rect.height) return;
-      this.pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      this.pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      if (this._pickAt(e.clientX, e.clientY)) this.select(this._pickAt.lastId);
+      else this.select(null);
+    };
 
-      this.raycaster.setFromCamera(this.pointer, this.camera);
+    // Hover is stored rather than raycast per event: pointermove fires far more
+    // often than a frame, and a raycast against every pickable tower is not
+    // free. The loop consumes it once per frame, so the cost is bounded by the
+    // frame rate rather than by the mouse.
+    this._onPointerMove = (e) => {
+      this._pointerDirty = true;
+      this._pointerX = e.clientX;
+      this._pointerY = e.clientY;
+    };
 
-      // Only the repos with real entries are pickable — ambient towers are
-      // scenery, and raycasting thousands of them is a waste.
-      const targets = [];
-      for (const t of this.towers) {
-        if (t.entry) targets.push(t.tower.group);
-      }
-      const hits = this.raycaster.intersectObjects(targets, true);
-      if (!hits.length) {
-        this.select(null);
-        return;
-      }
-
-      let node = hits[0].object;
-      while (node && node.parent !== this.scene) node = node.parent;
-      const found = this.towers.find((t) => t.tower.group === node);
-      if (found && found.entry) this.select(found.entry.repo.id);
+    this._onPointerLeave = () => {
+      this._pointerDirty = false;
+      if (this.marker) this.marker.setHover(null);
+      this.renderer.domElement.style.cursor = "";
     };
 
     const el = this.renderer.domElement;
     el.addEventListener("pointerdown", this._onPointerDown);
     el.addEventListener("pointerup", this._onPointerUp);
+    el.addEventListener("pointermove", this._onPointerMove);
+    el.addEventListener("pointerleave", this._onPointerLeave);
     this._pickEl = el;
+  }
+
+  /**
+   * Cast one ray and resolve it to a pickable tower.
+   *
+   * Returns the tower, or null. The id is stashed on the function object so the
+   * click handler does not have to cast twice — a raycast per click is cheap,
+   * but doing it twice for one click is still doing it twice for no reason.
+   */
+  _pickAt(clientX, clientY) {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    this.pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    this.pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+
+    this.raycaster.setFromCamera(this.pointer, this.camera);
+
+    // Only the repos with real entries are pickable — ambient towers are
+    // scenery, and raycasting thousands of them is a waste.
+    const targets = this.pickables;
+    const hits = this.raycaster.intersectObjects(targets, true);
+    if (!hits.length) {
+      this._pickAt.lastId = null;
+      return null;
+    }
+
+    // Walk up to the tower group. A hit is on a leaf — a blade, a polyp, a
+    // creature — and the only useful answer is the tower it belongs to.
+    let node = hits[0].object;
+    while (node && node.parent !== this.scene) node = node.parent;
+    const found = this.towers.find((t) => t.tower.group === node);
+    if (!found || !found.entry) {
+      this._pickAt.lastId = null;
+      return null;
+    }
+    this._pickAt.lastId = found.entry.repo.id;
+    return found.tower;
   }
 
   /** Select a repo by id (or null to clear). Fires onSelect. */
@@ -618,15 +659,22 @@ export class OceanWorld {
 
     if (!repoId) {
       this.focusPoint = null;
+      if (this.marker) this.marker.setSelected(null);
       this.onSelect(null);
       return;
     }
 
     const entry = this.entries.get(repoId);
     if (!entry) {
+      if (this.marker) this.marker.setSelected(null);
       this.onSelect(null);
       return;
     }
+
+    // Draw the mark before the camera moves, so the frame the camera settles on
+    // already has the selected tower ringed rather than the ring appearing a
+    // beat later.
+    if (this.marker) this.marker.setSelected(entry.tower);
 
     const p = entry.tower.group.position;
     // At the closest zoom the camera sits ~62 units out, so a focus point 18
@@ -901,6 +949,26 @@ export class OceanWorld {
         this.obelisks[i].update(delta, t);
       }
 
+      // --- Hover ---
+      // Resolved once per frame, not per pointermove: pointermove fires far
+      // more often than a frame and each raycast walks every pickable tower.
+      // The cursor is the cheap half of the affordance — it says "clickable"
+      // before the ring does, and costs nothing to set.
+      if (this._pointerDirty) {
+        this._pointerDirty = false;
+        const hovered = this._pickAt(this._pointerX, this._pointerY);
+        if (this.marker) this.marker.setHover(hovered);
+        // Only write the style when it changes; assigning the same string every
+        // frame is a style recalculation for no reason.
+        const cursor = hovered ? "pointer" : "";
+        if (this.renderer.domElement.style.cursor !== cursor) {
+          this.renderer.domElement.style.cursor = cursor;
+        }
+      }
+
+      // --- Selection / hover marks ---
+      if (this.marker) this.marker.update(delta, t);
+
       // --- Camera ---
       this.rig.update(delta, this._follow());
 
@@ -979,6 +1047,8 @@ export class OceanWorld {
     const el = this.renderer.domElement;
     el.removeEventListener("pointerdown", this._onPointerDown);
     el.removeEventListener("pointerup", this._onPointerUp);
+    el.removeEventListener("pointermove", this._onPointerMove);
+    el.removeEventListener("pointerleave", this._onPointerLeave);
     if (this.rig) this.rig.dispose();
 
     for (const t of this.towers) t.tower.dispose();
@@ -987,6 +1057,7 @@ export class OceanWorld {
     for (const c of this.creatureSystems) c.system.dispose();
     for (const a of this.ambientSchools) a.dispose();
     for (const o of this.obelisks) o.dispose();
+    if (this.marker) this.marker.dispose();
     if (this.ocean) this.ocean.dispose();
     if (this.floor) this.floor.dispose();
 
