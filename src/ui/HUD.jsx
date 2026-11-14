@@ -539,6 +539,76 @@ function CreditLine({ world }) {
   );
 }
 
+/* ------------------------------------------------------------------ */
+/* Live-data status                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One line about whether these numbers are real.
+ *
+ * The world builds from mock data and then fetches, so for the first seconds —
+ * and permanently, if the request fails — what is on screen is a plausible
+ * fiction. Saying so is cheaper than letting a user believe a number, and it
+ * turns "why is this repository called planetwood" into an answer instead of a
+ * mystery.
+ *
+ * Nothing here is an error state. A failed fetch leaves a correct ocean that is
+ * merely mocked, and the wording says exactly that.
+ */
+function DataStatus({ state }) {
+  if (!state) return null;
+
+  if (state.stage === "first" || state.stage === "enriching" || state.stage === "fetching") {
+    const total = state.total || 0;
+    const done = state.done || 0;
+    return (
+      <div className="go-datasource is-live" role="status" aria-live="polite">
+        <span className="go-datasource-dot" aria-hidden="true" />
+        {state.stage === "fetching"
+          ? `Loading ${state.repo}…`
+          : total
+          ? `Reading GitHub · ${done}/${total}`
+          : "Reading GitHub…"}
+      </div>
+    );
+  }
+
+  if (state.stage === "failed") {
+    return (
+      <div className="go-datasource is-mock" title={state.error || undefined}>
+        <span className="go-datasource-dot" aria-hidden="true" />
+        Mock data — GitHub unreachable
+      </div>
+    );
+  }
+
+  // ready
+  const updated = state.updated || 0;
+  if (!updated) {
+    return (
+      <div className="go-datasource is-mock" title={state.errors && state.errors.join("\n")}>
+        <span className="go-datasource-dot" aria-hidden="true" />
+        Mock data — nothing fetched
+      </div>
+    );
+  }
+  return (
+    <div
+      className="go-datasource is-real"
+      title={
+        (state.skipped && state.skipped.length
+          ? `Not drawn: ${state.skipped.join(", ")}`
+          : undefined) ||
+        (state.errors && state.errors.length ? state.errors.join("\n") : undefined)
+      }
+    >
+      <span className="go-datasource-dot" aria-hidden="true" />
+      {state.enriched ? "Live · enriched" : "Live"} · {updated} repo
+      {updated === 1 ? "" : "s"}
+    </div>
+  );
+}
+
 export default function HUD({
   world,
   levels,
@@ -547,6 +617,7 @@ export default function HUD({
   selectedRepo,
   onClearSelection,
   onFlyTo,
+  dataState,
 }) {
   const [legendOpen, setLegendOpen] = useState(false);
   // The creature under the pointer, polled from the world's marker. The world
@@ -569,6 +640,14 @@ export default function HUD({
     if (!world) return;
     setIdentity(world.data.you);
     setStats(world.data.stats);
+    // The world replaces `data.stats` in place when live records land, so the
+    // first render would otherwise keep the mock totals forever: the object
+    // identity is unchanged and React cannot see the difference. Poll the
+    // reference, cheaply, the same way the credit line does.
+    const id = setInterval(() => {
+      setStats((prev) => (prev === world.data.stats ? prev : world.data.stats));
+    }, 1200);
+    return () => clearInterval(id);
   }, [world]);
 
   useEffect(() => {
@@ -649,6 +728,7 @@ export default function HUD({
               <LanguageTally languages={stats.languages} />
             </div>
           )}
+          <DataStatus state={dataState} />
           <button
             className={"go-btn is-ghost" + (legendOpen ? " is-on" : "")}
             onClick={() => setLegendOpen((v) => !v)}

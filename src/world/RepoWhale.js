@@ -44,10 +44,82 @@ const BUILD = {
 };
 
 export class RepoWhale {
+  /**
+   * Re-read the repository's numbers into an existing whale.
+   *
+   * The API's second pass changes codebase size, commit frequency and language
+   * *after* the animal is already swimming. Rebuilding the whale to match would
+   * dispose and re-create geometry while the user is looking at it, which is a
+   * visible hitch; and the profile arrives once, so a rebuilt whale would be
+   * rebuilt again for no gain.
+   *
+   * So the fields that drive a silhouette are recomputed in place and the
+   * difference is recorded rather than redrawn. `drifted` is the honest answer:
+   * the HUD can say the body is being updated rather than pretend the animal
+   * changed shape on screen.
+   */
+  applyRepo(repo) {
+    if (!repo) return false;
+
+    const wasLength = this.length;
+    const wasGirth = this.girth;
+    const wasSpecies = this.species;
+    const wasColor = this.languageColor;
+
+    this.repo = repo;
+    this.species = repo.whaleSpecies || this.species;
+    this.build = BUILD[this.species.build] || this.build;
+    this.length = whaleLength(repo) * this.build.lengthMul;
+    this.girth = this.length * 0.19 * this.build.girthMul;
+    this.languageColor = languageStyleColor(repo.language);
+
+    // A scale, not a rebuild: the geometry is authored once and the body is
+    // scaled along its length, which is how the same sculpt reads as a calf and
+    // as a bull without two sets of vertex data.
+    // Scaling the group would multiply whatever the sculpt already set on the
+    // wrapper, and an imported body is normalized at load time — a second scale
+    // on top of it makes the animal the wrong size by a factor nobody can see in
+    // any single node's own numbers. So a length change is recorded and left to
+    // whoever owns the scale: the lathe applies it, the wrapper's sculpt keeps
+    // its own and reports the drift.
+    if (this.length !== wasLength || this.girth !== wasGirth) {
+      this.drifted = true;
+      const s = this.length / (wasLength || this.length);
+      if (!this.sculpt && this.group) this.group.scale.multiplyScalar(s);
+    }
+
+    // A species change is a different animal, not a different size. It only
+    // happens when the repo's primary language moved, which is rare enough that
+    // drawing attention to it is correct.
+    if (this.species !== wasSpecies) this.resleve = true;
+
+    // The language colour rides on the belly highlight, not on the skin: the
+    // skin's dorsal and lateral colours belong to the species, which is a fact
+    // about the animal, and overwriting them with a GitHub language colour would
+    // make every whale the same grey whatever it is.
+    if (this.languageColor !== wasColor) {
+      if (this.belly && this.belly.material) this.belly.material.color.setHex(this.languageColor);
+    }
+
+    // Scars are age. If the repository is older than the animal was built for,
+    // the scar amount is already on the skin uniform and needs no rebuild.
+    if (this.skinUniforms && this.skinUniforms.uScarAmount) {
+      this.skinUniforms.uScarAmount.value = THREE.MathUtils.clamp(
+        (repo.ageDays || 0) / 2200,
+        0.05,
+        0.85
+      );
+    }
+
+    return true;
+  }
+
   constructor(repo, opts = {}) {
     this.repo = repo;
     this.quality = opts.quality || "high";
     this.isMobile = opts.isMobile || false;
+    this.drifted = false;
+    this.resleve = false;
 
     this.species = repo.whaleSpecies || WHALE_SPECIES.BLUE;
     this.build = BUILD[this.species.build] || BUILD.sleek;
@@ -81,6 +153,10 @@ export class RepoWhale {
       blowhole: this.blowhole,
       spout: this.spout,
       spoutBaseY: this.spoutBaseY,
+      // The skin's uniforms are shared with the wrapper that adopts this whale's
+      // parts, so anything that needs to recolour the animal reaches them
+      // through here rather than by knowing where the mesh ended up.
+      skinUniforms: this.skinUniforms,
     };
   }
 

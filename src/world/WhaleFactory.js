@@ -45,6 +45,47 @@ export class WhaleWithSculpt extends RepoWhale {
   }
 
   /**
+   * Re-read the repository's numbers into a whale that may already carry a sculpt.
+   *
+   * The base class recomputes length, girth, species and scars. The sculpt is
+   * normalized to `this.length` at load, so if the length has changed since, the
+   * wrapper has to be re-normalized — otherwise the HUD reports the new codebase
+   * size while the animal in the water is still the old one.
+   */
+  applyRepo(repo) {
+    const wasLength = this.length;
+    const ok = super.applyRepo(repo);
+    if (!ok) return false;
+
+    // No sculpt, nothing to reconcile: the base class already scaled the group.
+    if (!this.sculpt || !this.sculptSize) return true;
+
+    if (this.length === wasLength) return true;
+
+    // `sculptSize` is a Vector3 whose `x` is nose-to-tail (normalizeWhale sets
+    // it to the target length) and whose `y`/`z` are measured height and width.
+    // There is no `.length` field: `Vector3.length()` is the magnitude of the
+    // vector, so reading `sculptSize.length` returns ~50 for a 48-unit whale and
+    // scaling by length/that would shrink the animal to almost nothing.
+    const wasX = this.sculptSize.x || this.length;
+    const k = this.length / (wasX || this.length);
+    if (Number.isFinite(k) && k > 0 && Math.abs(k - 1) > 1e-4) {
+      // The child carries the normalization scale; the wrapper carries the Y
+      // correction from adoptSculpt. Both are uniform in X and Z, so scaling the
+      // wrapper multiplies cleanly with the child's — and leaves the Y
+      // correction alone, because that is a proportion, not a size.
+      this.sculpt.scale.x *= k;
+      this.sculpt.scale.z *= k;
+      this.sculptSize.x = this.length;
+      this.sculptSize.y *= k;
+      this.sculptSize.z *= k;
+      this.drifted = true;
+    }
+
+    return true;
+  }
+
+  /**
    * Build the imported body and swap it in. Resolves true on success.
    *
    * Called immediately after construction by the factory; kept separate so the

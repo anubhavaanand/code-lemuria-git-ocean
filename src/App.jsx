@@ -18,6 +18,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OceanWorld } from "./world/OceanWorld";
+import { loadProfile } from "./services/profile";
 import { FrameProfiler } from "./world/perf";
 import { ZOOM_LEVELS } from "./world/constants";
 import HUD from "./ui/HUD";
@@ -40,6 +41,11 @@ export default function App() {
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // How far the live-data pass has got, or null while it is not running. Shown
+  // in the HUD rather than swallowed: a world that never fetched anything looks
+  // identical to one that fetched and found nothing, and only one of those is a
+  // bug.
+  const [dataState, setDataState] = useState(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -824,7 +830,66 @@ export default function App() {
       debugTimer = setInterval(emit, 1000);
     }
 
+    // --- the live pass -------------------------------------------------
+    //
+    // Deliberately not awaited by the effect. The world is already drawn from
+    // mock data by the time this runs, so the user sees an ocean immediately and
+    // the real numbers arrive into it — the reverse of blocking on a spinner.
+    //
+    // Gated on `?mock=1` for two reasons: the QA harness wants a reproducible
+    // world with no network in it, and a screenshot pass that silently picked up
+    // live data would not be comparable between runs.
+    //
+    // An unauthenticated request is the default. GitHub allows 60 an hour and
+    // that is enough to prove the seam works; a signed-in user gets 5,000 and
+    // the second pass, which costs six requests per repository.
+    const params = new URLSearchParams(window.location.search);
+    const skipLive = params.get("mock") === "1";
+    let cancelled = false;
+
+    if (!skipLive) {
+      const owner =
+        params.get("owner") || instance.data.you.username || "anubhavaanand";
+      const names = instance.data.yourRepos.map((r) => r.name);
+      const enrich = params.get("enrich") !== "0";
+
+      setDataState({ stage: "first", done: 0, total: names.length });
+
+      loadProfile({
+        owner,
+        repos: names,
+        enrich,
+        onStage: (stage, detail) => {
+          if (cancelled) return;
+          setDataState({ stage, done: detail.done || 0, total: detail.total || names.length });
+        },
+      })
+        .then((profile) => {
+          if (cancelled) return;
+          const result = instance.adoptProfile(profile.repos);
+          // Reported, not hidden: a repository the API returned that the world
+          // had no tower for is a real difference between the mock set and the
+          // real profile, and it is the kind of thing that should be visible
+          // rather than quietly dropped.
+          setDataState({
+            stage: "ready",
+            updated: result.updated.length,
+            skipped: result.skipped,
+            errors: profile.errors || [],
+            enriched: enrich,
+          });
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          // A failed live pass is not a broken world. The ocean is still there
+          // and still correct about what it knows; it is only mocked.
+          console.warn("[git-ocean] live data failed, staying on the mock world", err);
+          setDataState({ stage: "failed", error: String(err && err.message || err) });
+        });
+    }
+
     return () => {
+      cancelled = true;
       if (debugTimer) clearInterval(debugTimer);
       window.removeEventListener("resize", onResize);
       if (ro) ro.disconnect();
@@ -853,12 +918,56 @@ export default function App() {
     setSelectedRepo(null);
   }, []);
 
-  const handleFlyTo = useCallback((repoId) => {
+  /**
+   * Fly to a repository, fetching its real numbers if it is not in the world yet.
+   *
+   * The mock set covers four of the user's repositories and three followed
+   * accounts, so a fly-to from search or a deep link usually names something the
+   * scene has never drawn. Selecting an id that is not in `entries` clears the
+   * selection and moves nothing, which reads as a broken button. So the record is
+   * fetched first and a tower is added for it.
+   */
+  const handleFlyTo = useCallback(async (repoId) => {
     const w = worldRef.current;
     if (!w) return;
-    w.select(repoId);
-    w.focusSelected(3); // tower level
-    setLevelId("tower");
+
+    // Already standing: select and frame it. This is the common case and must
+    // not wait on a network round trip.
+    if (w.entries.has(repoId)) {
+      w.select(repoId);
+      w.focusSelected(3);
+      setLevelId("tower");
+      return;
+    }
+
+    // `repoId` is the world id, which the first pass builds as `owner/name` —
+    // see `apiToWorldRepo`. Split on the first slash only, because a repository
+    // name cannot contain one but an owner cannot either.
+    const cut = String(repoId).indexOf("/");
+    if (cut < 1) return;
+    const owner = String(repoId).slice(0, cut);
+    const name = String(repoId).slice(cut + 1);
+
+    setDataState({ stage: "fetching", repo: `${owner}/${name}` });
+    try {
+      const record = await loadOne(owner, name, { enrich: false });
+      if (!record) {
+        setDataState({ stage: "failed", error: `${owner}/${name} could not be loaded` });
+        return;
+      }
+      const added = w.addTower(record);
+      if (!added) {
+        // It arrived between the check and the fetch; selecting is correct now.
+        w.select(record.id);
+      } else {
+        w.select(record.id);
+      }
+      w.focusSelected(3);
+      setLevelId("tower");
+      setDataState({ stage: "ready", added: `${owner}/${name}` });
+    } catch (err) {
+      setDataState({ stage: "failed", error: String((err && err.message) || err) });
+    }
   }, []);
 
   return (
@@ -871,6 +980,7 @@ export default function App() {
         activeLevelId={levelId}
         onLevelChange={handleLevelPick}
         selectedRepo={selectedRepo}
+        dataState={dataState}
         onClearSelection={handleCloseCard}
         onDismiss={handleClearSelection}
         onFlyTo={handleFlyTo}
