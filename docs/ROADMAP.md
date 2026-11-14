@@ -124,15 +124,20 @@ and flippers are individually identifiable, and a separation score of 8+.
 
 ### 2. Wire the API to the scene
 
-The services layer is complete; the scene is not consuming it. The work is the
-mapping: `transformRepoData` output has to become `makeRepo` input, and the
-mock values in `worldData.js` have to become defaults rather than data.
+**Status: done.** `loadProfile` runs on mount, the records land through
+`adoptProfile`, and the whale is re-derived from the real commit count. The
+mapping is `transformRepoData` → `apiToWorldRepo` → `makeRepo`, with the mock
+values in `worldData.js` left as defaults rather than as data.
 
-**Why after the whale**: populating the world with real data while the hero
-element is unreadable would mean every future visual defect is entangled with
-"and also the data is real now." One variable at a time.
+It was ordered after the whale deliberately: populating the world with real data
+while the hero element is unreadable would entangle every future visual defect
+with "and also the data is real now." One variable at a time.
 
-**Blockers** (unchanged since the beginning):
+What is left is not wiring but **scale**: sixty anonymous requests an hour covers
+a profile of four repositories and its enrichment, and a signed-in user gets 5,000
+points. The blockers below are still what a real launch needs.
+
+**Blockers** (unchanged, and now the only ones on this item):
 - **B1** — Cloudflare `account_id` → `wrangler.jsonc`.
 - **B2** — GitHub OAuth `CLIENT_ID` / `CLIENT_SECRET` → `.dev.vars`.
 
