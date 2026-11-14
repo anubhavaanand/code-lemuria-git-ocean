@@ -489,6 +489,10 @@ export class LegacyColony {
       }
       mesh.instanceMatrix.needsUpdate = true;
     });
+
+    // Published so the fauna census can count it. Without this the creature
+    // existed and drew, but was invisible to any count of the colony.
+    this.copepods = n;
   }
 
   /**
@@ -640,6 +644,9 @@ export class LegacyColony {
       }
       mesh.instanceMatrix.needsUpdate = true;
     });
+
+    // Published so the fauna census can count it (see buildCopepods).
+    this.amphipods = n;
   }
 
   /**
