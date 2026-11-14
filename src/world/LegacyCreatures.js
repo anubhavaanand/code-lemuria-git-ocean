@@ -869,6 +869,11 @@ export class LegacyColony {
     scar.rotation.x = Math.PI / 2;
     scar.position.y = this.yAt(0.3);
     this.group.add(scar);
+    // The scar is the fish's mark rather than a separate animal, so it carries
+    // the same creature: one root per creature is not the rule, one creature per
+    // root is. Clicking the band should answer "the parrotfish", because that is
+    // what made it.
+    this.tag("parrotfish", scar);
 
     const f = 0.28 + this.rng() * 0.3;
     const y = this.yAt(f);
