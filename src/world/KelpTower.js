@@ -354,6 +354,8 @@ export class KelpTower {
     mesh.instanceMatrix.needsUpdate = true;
     this.group.add(mesh);
     this.tubeWorms = mesh;
+    this._wormPhases = [];
+    for (let i = 0; i < count; i++) this._wormPhases.push(Math.random() * 6.28);
   }
 
   // -------------------------------------------------------------------------
@@ -410,6 +412,37 @@ export class KelpTower {
       const breathe = 1 + Math.sin(this.time * 0.7) * 0.06;
       const base = this.girth * (2.4 + (this.starStrength || 0) * 4.5);
       this.starGlow.scale.setScalar(base * breathe);
+    }
+
+    // Activity lights shimmer in time with the current
+    // (This is the tube-worm cluster for CI/CD status.)
+    if (this.tubeWorms) {
+      const n = this.tubeWorms.count || 0;
+      if (!this._wormBase) {
+        this._wormBase = [];
+        const m = new THREE.Matrix4();
+        for (let i = 0; i < n; i++) {
+          this.tubeWorms.getMatrixAt(i, m);
+          this._wormBase.push(m.elements.slice());
+        }
+      }
+      const pulse = 0.82 + Math.sin(this.time * 1.7) * 0.18;
+      for (let i = 0; i < n; i++) {
+        const ph = this._wormPhases[i];
+        this._bm.fromArray(this._wormBase[i]);
+        this._bm.decompose(this._bp, this._bq, this._bs);
+        const baseY = this._bp.y;
+        this._bp.y = baseY + Math.sin(this.time * 1.3 + ph) * 0.22;
+        const breathe = pulse * 0.7 + Math.sin(this.time * 2.1 + ph) * 0.3;
+        this._bs.set(
+          this._bs.x * (0.9 + breathe * 0.15),
+          this._bs.y * (0.96 + breathe * 0.08),
+          this._bs.z * (0.9 + breathe * 0.15)
+        );
+        this._bm.compose(this._bp, this._bq, this._bs);
+        this.tubeWorms.setMatrixAt(i, this._bm);
+      }
+      this.tubeWorms.instanceMatrix.needsUpdate = true;
     }
   }
 

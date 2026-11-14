@@ -50,8 +50,9 @@ import {
 import { OceanEnvironment, createFog, depthBackground } from "./OceanEnvironment";
 import { Seafloor, seafloorHeightAt } from "./Seafloor";
 import { KelpTower } from "./KelpTower";
-import { RepoWhale } from "./RepoWhale";
+import { WhaleWithSculpt } from "./WhaleFactory";
 import { CreatureSystem, AmbientSchool } from "./CreatureGeometry";
+import { LegacyColony } from "./LegacyCreatures";
 import { SonarObelisk, buildClusterLights } from "./SonarObelisk";
 import { CameraRig } from "./CameraRig";
 
@@ -75,6 +76,23 @@ export class OceanWorld {
     this.isMobile = this.quality === "mobile";
     this.drawDistance = this.isMobile ? 2200 : this.quality === "low" ? 3200 : 5200;
 
+    // Suppress the imported whale bodies, for pixel-diffing the sculpt against
+    // the procedural one. Set from `?nosculpt=1` by the caller.
+    this.suppressSculpt = !!opts.suppressSculpt;
+
+    // Isolate the whale, for measuring its silhouette unambiguously.
+    //
+    // Differencing a normal frame against `?nosculpt=1` does not isolate the
+    // body: removing the sculpt also changes what is visible behind it, so the
+    // diff is a silhouette-plus-background map. Measured that way the "body"
+    // came out 604 x 268 px against a predicted 267 x 101 px — the tower and
+    // kelp blades sitting behind the animal were being counted as whale.
+    //
+    // With this set, everything except the whales is hidden and the background
+    // goes flat, so a brightness threshold returns the animal and nothing else.
+    // Set from `?only=whale`.
+    this.onlyWhales = !!opts.onlyWhales;
+
     this.onSelect = opts.onSelect || (() => {});
     this.onLevelChange = opts.onLevelChange || (() => {});
     this.onReady = opts.onReady || (() => {});
@@ -89,6 +107,8 @@ export class OceanWorld {
     this.towers = [];          // { tower, repo, entry }
     this.whales = [];          // { whale, entry, orbit }
     this.creatureSystems = []; // { system, entry, orbit }
+    this.legacy = [];          // LegacyColony — benthic + stipe + water-column fauna
+    this.pendingCredits = [];  // CC BY attribution owed for imported sculpts
     this.ambientSchools = [];
     this.obelisks = [];
     this.entries = new Map();  // repoId -> entry
@@ -220,6 +240,16 @@ export class OceanWorld {
 
   _buildEnvironment() {
     const opts = { quality: this.quality, isMobile: this.isMobile };
+
+    // `?only=whale` skips the water column, the seafloor and the ambient
+    // schools entirely, so nothing can be mistaken for the animal. See the
+    // `onlyWhales` note in the constructor.
+    if (this.onlyWhales) {
+      this.scene.background = new THREE.Color(0x000106);
+      this.scene.fog = null;
+      return;
+    }
+
     this.ocean = new OceanEnvironment(this.scene, opts);
     this.floor = new Seafloor(this.scene, opts);
 
@@ -252,6 +282,27 @@ export class OceanWorld {
   _buildWorldGeometry() {
     const opts = { quality: this.quality, isMobile: this.isMobile };
 
+    if (this.onlyWhales) {
+      // Towers are still needed: a whale is placed relative to its tower's
+      // height and position. But the tower's own geometry is not, so build the
+      // towers with their visuals suppressed rather than rebuilding the layout.
+      this._addRepoTowers(this.data.yourRepos, {
+        zBase: LAYERS.kelpForestMid,
+        withWhales: true,
+        withCreatures: false,
+        withLegacy: false,
+        hideGeometry: true,
+      });
+      this._addRepoTowers(this.data.following, {
+        zBase: LAYERS.kelpForestFar,
+        withWhales: true,
+        withCreatures: false,
+        withLegacy: false,
+        hideGeometry: true,
+      });
+      return;
+    }
+
     // --- Capital landmarks: sonar obelisks ---
     // Only build the nearest few as full geometry; the rest become lights.
     for (const cluster of CAPITAL_CLUSTERS) {
@@ -280,6 +331,7 @@ export class OceanWorld {
       zBase: LAYERS.kelpForestMid,
       withWhales: true,
       withCreatures: true,
+      withLegacy: true,
       scale: 1.0,
     });
 
@@ -288,6 +340,7 @@ export class OceanWorld {
       zBase: LAYERS.kelpForestFar,
       withWhales: true,
       withCreatures: true,
+      withLegacy: !this.isMobile,
       scale: 1.0,
     });
 
@@ -311,6 +364,10 @@ export class OceanWorld {
       const tz = opts.zBase + pos[1];
       tower.group.position.set(tx, seafloorHeightAt(tx, tz), tz);
       tower.group.scale.setScalar(opts.scale);
+      // `?only=whale` needs the tower's height and root position (a whale's
+      // orbit is derived from both) but not its geometry. Hide the visuals
+      // rather than skipping the tower, so the layout maths is untouched.
+      if (opts.hideGeometry) tower.group.visible = false;
       this.scene.add(tower.group);
 
       const entry = {
@@ -318,6 +375,7 @@ export class OceanWorld {
         tower,
         whale: null,
         creatures: null,
+        legacy: null,
         whaleOrbit: null,
         kind: "repo",
       };
@@ -325,13 +383,55 @@ export class OceanWorld {
       this.towers.push({ tower, repo, entry });
       this.pickables.push(tower.group);
 
+      // Legacy creatures live on the tower itself, so they exist whether or not
+      // this repo earned a whale. Ambient towers deliberately skip them: the
+      // anonymous mass of GitHub gets silhouette, not detail.
+      if (opts.withLegacy) {
+        const legacy = new LegacyColony(repo, {
+          tower,
+          quality: this.quality,
+          isMobile: this.isMobile,
+        });
+        tower.group.add(legacy.group);
+        entry.legacy = legacy;
+        this.legacy.push(legacy);
+      }
+
       if (opts.withWhales) {
-        const whale = new RepoWhale(repo, {
+        // WhaleWithSculpt is a RepoWhale: same swim cycle, same data-bearing
+        // parts, only the silhouette may differ. Species without an imported
+        // model (blue, bowhead, sperm, orca) get the procedural lathe and never
+        // know the difference.
+        const whale = new WhaleWithSculpt(repo, {
           quality: this.quality,
           isMobile: this.isMobile,
         });
 
-        const orbitR = tower.height * 0.7 + 16;
+        // Kick the load without blocking scene assembly: the procedural body is
+        // already in the scene and animating, so a whale is visible immediately
+        // and a fast network swaps in the sculpt a moment later. A failed load
+        // leaves the lathe, which is the correct fallback, not an error state.
+        if (WhaleWithSculpt.hasSculpt(repo) && !this.isMobile) {
+          // `?nosculpt=1` keeps the procedural body so a screenshot pair can be
+          // diffed. Without a way to suppress the sculpt there is no way to tell
+          // "the whale is not drawn" from "the whale is drawn but unreadable":
+          // an earlier diff appeared to show 37,052 changed pixels, but the flag
+          // it relied on never existed, so both captures were the same frame and
+          // the difference was water animation.
+          const suppress = this.suppressSculpt;
+          if (!suppress) {
+            whale.adoptSculpt().then((ok) => {
+              if (ok) this.pendingCredits.push(whale.sculptCredit);
+            });
+          }
+        }
+
+        // Orbit radius is capped. Without a cap a flagship tower (160+ units)
+        // pushed its whale 130 units out, further than the whale level's camera
+        // sits from the tower — so the animal spent most of its orbit off the
+        // edge of the frame. A cap keeps every repo's whale inside the lens
+        // while preserving the rule that bigger repos orbit wider.
+        const orbitR = Math.min(tower.height * 0.7 + 16, 62);
         // Orbit height must be measured from the tower's ROOT, not from y=0,
         // otherwise a tower standing in a trough had its whale circling
         // somewhere inside the sediment.
@@ -339,7 +439,27 @@ export class OceanWorld {
         const cx = pos[0];
         const cz = opts.zBase + pos[1];
 
-        whale.group.position.set(cx + orbitR, cy, cz);
+        // The starting phase is authored, not random, so that a screenshot and
+        // a geometry census are taken of the same frame. A random phase makes
+        // every page load a different picture, which is how a QA pass measuring
+        // pixels in one run and reading coordinates from another concludes the
+        // whale is missing.
+        //
+        // PI/2 specifically, not just any fixed value. The whale's heading is
+        // the orbit's tangent, so at phase PI/2 it travels along -X while the
+        // camera looks along +Z — the animal crosses the frame broadside, which
+        // is the only orientation in which a body plan (head, taper, flukes,
+        // flippers) is legible. At PI*0.75 the same animal swims away from the
+        // lens at 45 degrees and reads as a shapeless mass, which is exactly
+        // what a QA pass reported when the whale was demonstrably being drawn
+        // (37,052 pixels changed with the sculpt hidden).
+        const startPhase = Math.PI * 0.5;
+
+        whale.group.position.set(
+          cx + Math.cos(startPhase) * orbitR,
+          cy,
+          cz + Math.sin(startPhase) * orbitR
+        );
         this.scene.add(whale.group);
 
         entry.whale = whale;
@@ -348,9 +468,14 @@ export class OceanWorld {
           cz,
           r: orbitR,
           y: cy,
-          phase: Math.random() * Math.PI * 2,
+          phase: startPhase,
           speed: 0.055 + Math.random() * 0.05,
         };
+        whale.group.position.set(
+          cx + Math.cos(startPhase) * orbitR,
+          cy,
+          cz + Math.sin(startPhase) * orbitR
+        );
         this.whales.push({ whale, entry, orbit: entry.whaleOrbit });
 
         if (opts.withCreatures) {
@@ -474,12 +599,24 @@ export class OceanWorld {
     }
 
     const p = entry.tower.group.position;
+    // At the closest zoom the camera sits ~62 units out, so a focus point 18
+    // units up (0.55 x a 31-unit tower) points the lens at empty water above the
+    // whale's orbit. The animals circle at roughly half the tower height, which
+    // is also where the tower's visual mass is, so aim there instead.
     this.focusPoint = {
       x: p.x,
-      y: entry.tower.height * 0.55,
+      y: entry.tower.height * 0.42,
       z: p.z,
     };
-    this.focusRadius = entry.tower.height;
+    // Orbit radius, not tower height, is what the camera must clear: the whale
+    // is the subject at the closest zoom, and it circles at 0.7 x height + 16.
+    this.focusRadius = Math.min(entry.tower.height * 0.7 + 16, 62);
+    // The animal's own length, which is what the whale zoom actually frames.
+    // Its orbit radius is only the floor on how far back the lens can sit.
+    if (entry.whale) {
+      this.focusLength = entry.whale.length;
+      this.focusOrbitY = entry.whaleOrbit ? entry.whaleOrbit.y : entry.tower.height * 0.58;
+    }
 
     this.onSelect(entry.repo);
   }
@@ -488,6 +625,68 @@ export class OceanWorld {
   focusSelected(levelIndex = 3) {
     if (!this.selectedId) return;
     this.rig.goTo(levelIndex);
+    // goTo() only moves targetT; the eased `t` is still at the old level. Snap
+    // immediately so a caller that frames and then reads the camera in the same
+    // tick gets the framing it asked for instead of a mid-transition position.
+    //
+    // `radius` must be passed here too: it is what scales the level's authored
+    // distance to the size of the subject, and without it the snap frames an
+    // ordinary-sized tower while the actual repo (a flagship, with a much wider
+    // whale orbit) sits partly outside the frame.
+    this.rig.apply(0, true, this._follow());
+  }
+
+  /**
+   * The camera's follow target in the shape the rig expects.
+   *
+   * One place builds this so the frame loop and a one-shot snap can never
+   * disagree about what is being followed — they did disagree once, which is how
+   * a snapped framing ended up tighter than the animated one.
+   */
+  _follow() {
+    if (!this.focusPoint) return null;
+    const follow = {
+      position: this._tmpVec.set(
+        this.focusPoint.x,
+        this.focusPoint.y,
+        this.focusPoint.z
+      ),
+      radius: this.focusRadius || 32,
+    };
+
+    // The whale zoom frames the ANIMAL, so the focus and distance are derived
+    // from its own length, not from the tower's.
+    //
+    // Every earlier attempt derived them from tower height and got the sign
+    // backwards: it scaled the lens UP with the tower, so a flagship repo got a
+    // lens 300 units overhead looking down 35 degrees while its whale sat at
+    // 0.58 x height - above the focus, near the bottom of the frame, clipped.
+    // Measured on the live scene at the vue repo: the camera's forward ray
+    // crossed the whale's depth plane 6.9 units above the body centre, and the
+    // QA pass found the animal along the bottom edge with head and flukes cut
+    // off.
+    //
+    // So: aim AT the orbit height, and set the distance so the orbit plus the
+    // animal's own length fits the frame. Nothing here depends on tower height
+    // except through the orbit radius, which is already capped at 62.
+    const orbitY =
+      this.focusOrbitY != null ? this.focusOrbitY : this.focusPoint.y;
+    const length = this.focusLength || 18;
+    const halfV = 0.38 * length * 0.5 + 6;
+    const fovV = 42;
+    const ty = Math.tan((fovV * Math.PI) / 360);
+    const tx = ty * (1440 / 900);
+    // Horizontally the lens must hold the whole orbit plus half the body, or
+    // the animal leaves the frame at some phase of its circle.
+    const halfH = (this.focusRadius || 32) + length * 0.5;
+    const dist = Math.max(halfV / ty, halfH / tx) * 1.9;
+    follow.distance = dist;
+    follow.focusY = orbitY;
+    // Height is measured FROM the focus, so this is the pitch expressed as a
+    // rise: 11 degrees is shallow enough to read as a profile rather than a
+    // plan view, and it keeps the tower behind the animal instead of under it.
+    follow.height = Math.tan((11 * Math.PI) / 180) * dist;
+    return follow;
   }
 
   // =========================================================================
@@ -499,12 +698,19 @@ export class OceanWorld {
       this.frameHandle = requestAnimationFrame(tick);
 
       const delta = Math.min(0.05, this.clock.getDelta());
-      this.elapsed += delta;
+      // `timeScale` is the other half of `?freeze=1`. Pinning the orbit alone is
+      // not enough to compare two frames: caustics, god rays, marine snow and
+      // kelp sway all advance on `elapsed`, so an on/off diff still lit up every
+      // pixel in the frame and measured nothing about the whale. Held at 0 the
+      // whole scene is genuinely static and a diff means what it says.
+      this.elapsed += delta * (this.timeScale ?? 1);
       const t = this.elapsed;
       this.frame++;
 
       // --- Environment ---
-      this.ocean.update(delta, t);
+      // Guarded: `?only=whale` skips the water column entirely, so there is no
+      // ocean to update.
+      if (this.ocean) this.ocean.update(delta, t);
 
       // Fog is authored per zoom level (real metres), so the density is read
       // directly rather than recomputed from the depth value.
@@ -533,12 +739,25 @@ export class OceanWorld {
         rec.tower.update(delta);
       }
 
+      // --- Legacy fauna ---
+      // These ride on the tower groups, so they inherit every tower transform
+      // for free and need no world-space bookkeeping of their own.
+      for (let i = 0; i < this.legacy.length; i++) {
+        this.legacy[i].update(delta);
+      }
+
       // --- Whales: circle their tower, trailing their orbital cloud ---
       for (let i = 0; i < this.whales.length; i++) {
         const { whale, entry, orbit } = this.whales[i];
         if (!entry) continue;
 
-        orbit.phase += delta * orbit.speed;
+        // `orbitScale` exists so a headless screenshot and a geometry census can
+        // be taken of the SAME frame. A whale's orbit advances with wall-clock
+        // delta, so two separate page loads put the animal at different phases —
+        // and a QA pass that measures the pixels in one run and reads the
+        // reported position from another will look at empty water and conclude
+        // the whale is missing. Pinned to 0 the animal holds still.
+        orbit.phase += delta * orbit.speed * (this.orbitScale ?? 1);
         const x = orbit.cx + Math.cos(orbit.phase) * orbit.r;
         const z = orbit.cz + Math.sin(orbit.phase) * orbit.r;
         const y = orbit.y + Math.sin(t * 0.42 + orbit.phase) * 3.4;
@@ -576,10 +795,7 @@ export class OceanWorld {
       }
 
       // --- Camera ---
-      const follow = this.focusPoint
-        ? { position: this._tmpVec.set(this.focusPoint.x, this.focusPoint.y, this.focusPoint.z) }
-        : null;
-      this.rig.update(delta, follow);
+      this.rig.update(delta, this._follow());
 
       // Keep the sun shadow volume around the camera so shadows stay sharp
       if (this.sun && this.sun.castShadow) {
@@ -641,6 +857,7 @@ export class OceanWorld {
     if (this.rig) this.rig.dispose();
 
     for (const t of this.towers) t.tower.dispose();
+    for (const l of this.legacy) l.dispose();
     for (const w of this.whales) w.whale.dispose();
     for (const c of this.creatureSystems) c.system.dispose();
     for (const a of this.ambientSchools) a.dispose();

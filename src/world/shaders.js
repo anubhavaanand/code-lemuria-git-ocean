@@ -334,12 +334,15 @@ void main() {
 export const whaleSkinVertex = /* glsl */ `
 varying vec3 vNormalW;
 varying vec3 vPosL;
+varying vec3 vWorld;
 varying vec2 vUv;
 void main() {
   vUv = uv;
   vPosL = position;
   vNormalW = normalize(mat3(modelMatrix) * normal);
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  vec4 world = modelMatrix * vec4(position, 1.0);
+  vWorld = world.xyz;
+  gl_Position = projectionMatrix * viewMatrix * world;
 }
 `;
 
@@ -353,6 +356,7 @@ uniform float uScarAmount;
 uniform float uTime;
 varying vec3 vNormalW;
 varying vec3 vPosL;
+varying vec3 vWorld;
 varying vec2 vUv;
 
 ${SIMPLEX_2D}
@@ -371,6 +375,42 @@ void main() {
   float scarNoise = snoise(vPosL.xy * 9.0) * 0.5 + 0.5;
   float scar = smoothstep(0.80, 0.94, scarNoise) * uScarAmount * upness;
   col = mix(col, uColorScar, scar * 0.55);
+
+  // ---- Form shading -------------------------------------------------------
+  //
+  // This material is deliberately NOT a lit material: it is a ShaderMaterial so
+  // that every repo's skin colour can be authored directly. But an unlit shader
+  // outputs a constant colour per pixel, and a constant colour on a curved body
+  // reads as a flat silhouette — which is exactly what the first visual QA pass
+  // reported: "blocky low-poly blob, no body, no head". So the shading is done
+  // here, with a fixed three-light rig that mimics the scene's own (sun above,
+  // cold bounce below, soft front fill). Nothing needs a light in the scene.
+  vec3 n = normalize(vNormalW);
+
+  // Key light from above and slightly ahead, matching the scene sun.
+  vec3 keyDir = normalize(vec3(-0.34, 0.90, 0.28));
+  float key = max(dot(n, keyDir), 0.0);
+
+  // Cold bounce from the water below — this is what keeps the belly from
+  // going to pure black and is what real underwater footage actually looks like.
+  vec3 bounceDir = normalize(vec3(0.25, -0.92, -0.30));
+  float bounce = max(dot(n, bounceDir), 0.0);
+
+  // Wrap term: water scatters light, so the terminator is soft, not hard.
+  float wrap = clamp((dot(n, keyDir) + 0.45) / 1.45, 0.0, 1.0);
+  float lightAmount = 0.30 + wrap * 0.62 + bounce * 0.24;
+
+  col *= lightAmount;
+  col += uColorLateral * bounce * 0.10;
+
+  // Rim: a thin bright edge where the body turns away from the viewer. This is
+  // the single strongest readability cue — it separates the animal from the
+  // water column at any size, and it is a real optical effect (forward
+  // scattering through the thin edge of a body).
+  vec3 viewDir = normalize(cameraPosition - vWorld.xyz);
+  float rim = 1.0 - max(dot(n, viewDir), 0.0);
+  rim = pow(rim, 3.2);
+  col += uColorVentral * rim * 0.42;
 
   gl_FragColor = vec4(col, 1.0);
 }

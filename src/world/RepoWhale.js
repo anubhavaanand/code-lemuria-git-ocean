@@ -70,6 +70,39 @@ export class RepoWhale {
     this.buildRemoras();
     this.buildBlowhole();
     this.buildPleats();
+
+    // Everything that encodes a repository lives on `parts`, so a wrapper can
+    // adopt this whale's meaning while supplying its own silhouette.
+    this.parts = {
+      flippers: this.flippers,
+      flukePivot: this.flukePivot,
+      barnacles: this.barnacleMesh || null,
+      remoras: this.remoraMesh || null,
+      blowhole: this.blowhole,
+      spout: this.spout,
+      spoutBaseY: this.spoutBaseY,
+    };
+  }
+
+  /** Detach every child mesh without disposing it (ownership passes to `to` ). */
+  takeParts() {
+    const parts = this.parts;
+    if (!parts) return;
+    const adopt = (obj) => {
+      if (!obj) return null;
+      this.group.remove(obj);
+      return obj;
+    };
+    for (const key of ["flippers"]) {
+      if (Array.isArray(parts[key])) {
+        for (const f of parts[key]) adopt(f.mesh);
+      }
+    }
+    adopt(parts.flukePivot);
+    adopt(parts.barnacles);
+    adopt(parts.remoras);
+    adopt(parts.blowhole);
+    adopt(parts.spout);
   }
 
   // -------------------------------------------------------------------------
@@ -146,6 +179,8 @@ export class RepoWhale {
     const headLen = this.length * 0.26 * this.build.headMul;
 
     // Lower jaw — a flattened wedge under the snout
+    // Width (x) and girth (y/z) come from the body so a sculpt's head keeps its
+    // own proportions; only the length along the snout is derived here.
     const jawGeo = new THREE.BoxGeometry(headLen, this.girth * 0.16, this.girth * 1.1);
     const jawMat = new THREE.MeshStandardMaterial({
       color: COLORS.whaleVentral,
@@ -154,8 +189,8 @@ export class RepoWhale {
     });
     this.jaw = new THREE.Mesh(jawGeo, jawMat);
     this.jaw.position.set(
-      -this.length * 0.5 + headLen * 0.45,
-      -this.girth * 0.42,
+      this.xAt(0.14),
+      -this.surfaceRadius(0.14) * 0.74,
       0
     );
     this.group.add(this.jaw);
@@ -170,10 +205,11 @@ export class RepoWhale {
     this.eyes = [];
     for (const side of [-1, 1]) {
       const eye = new THREE.Mesh(eyeGeo, eyeMat);
+      // Eye sits just above and behind the jaw line, set wide on the head.
       eye.position.set(
-        -this.length * 0.5 + headLen * 0.62,
-        -this.girth * 0.12,
-        side * this.girth * 0.78
+        this.xAt(0.2),
+        -this.surfaceRadius(0.2) * 0.18,
+        side * this.surfaceRadius(0.2) * 0.94
       );
       this.group.add(eye);
       this.eyes.push(eye);
@@ -219,10 +255,12 @@ export class RepoWhale {
     this.flippers = [];
     for (const side of [-1, 1]) {
       const fin = new THREE.Mesh(geo, mat);
+      // Pectoral fins sit just behind and below the head — about 22% back on a
+      // humpback, which is the fraction the sculpt's own flippers use.
       fin.position.set(
-        -this.length * 0.16,
-        -this.girth * 0.42,
-        side * this.girth * 0.7
+        this.xAt(0.26),
+        -this.surfaceRadius(0.26) * 0.72,
+        side * this.surfaceRadius(0.26) * 0.86
       );
       fin.rotation.set(side * 0.5, 0, side * -0.35);
       this.group.add(fin);
@@ -235,12 +273,15 @@ export class RepoWhale {
     // -------------------------------------------------------------------------
   buildFlukes() {
     const forkRatio = THREE.MathUtils.clamp((this.repo.forks || 0) / 120, 0.05, 1);
-    const span = this.girth * (2.2 + forkRatio * 3.4) * this.build.flukeSpan;
+    // Fluke span is a fraction of the tail stock's width, not of body girth —
+    // measured on a humpback the flukes are ~1.6x the peduncle's width.
+    const stock = this.surfaceRadius(0.94);
+    const span = stock * (2.2 + forkRatio * 3.4) * this.build.flukeSpan;
 
     // Two mirrored lobes with a central notch
     const geo = new THREE.BufferGeometry();
     const w = span * 0.5;
-    const l = this.length * 0.16;
+    const l = this.sculptSize ? this.sculptSize.x * 0.09 : this.length * 0.16;
     const verts = new Float32Array([
       // Left lobe
       0, 0, 0,
@@ -265,7 +306,10 @@ export class RepoWhale {
     this.flukePivot = new THREE.Group();
     const flukes = new THREE.Mesh(geo, mat);
     this.flukePivot.add(flukes);
-    this.flukePivot.position.x = this.length * 0.5;
+    // Seat the pivot on the tail stock, not at a guessed x: the last 16% of the
+    // body is where a cetacean's peduncle is, and a sculpt's tail may sit
+    // anywhere within that band.
+    this.flukePivot.position.x = this.tailX();
     this.group.add(this.flukePivot);
   }
 
@@ -275,8 +319,8 @@ export class RepoWhale {
   buildDorsalFin() {
     if (this.build.dorsalFin <= 0) return;
 
-    const h = this.girth * this.build.dorsalFin * 2.4;
-    const geo = new THREE.ConeGeometry(this.girth * 0.22, h, 4);
+    const h = this.surfaceRadius(0.68) * this.build.dorsalFin * 2.4;
+    const geo = new THREE.ConeGeometry(this.surfaceRadius(0.68) * 0.22, h, 4);
     geo.scale(1.5, 1, 0.34);
 
     const mat = new THREE.MeshStandardMaterial({
@@ -286,7 +330,8 @@ export class RepoWhale {
     });
 
     this.dorsal = new THREE.Mesh(geo, mat);
-    this.dorsal.position.set(this.length * 0.24, this.girth * 0.86, 0);
+    // Dorsal fin sits far back — roughly two-thirds along the body on a humpback.
+    this.dorsal.position.set(this.xAt(0.68), this.surfaceRadius(0.68) * 0.94, 0);
     this.dorsal.rotation.z = -0.32;
     this.group.add(this.dorsal);
   }
@@ -322,10 +367,12 @@ export class RepoWhale {
       // Barnacles cluster on the head and back — real settlement pattern
       const t = Math.random() < 0.55 ? Math.random() * 0.3 : Math.random() * 0.85;
       const a = Math.random() * Math.PI * 2;
-      const bodyR = this.girth * (0.55 + Math.sin(t * Math.PI) * 0.45);
+      // Seat on the skin. A sculpt's radius at a given fraction is not the lathe
+      // sine, so this goes through surfaceRadius() like everything else.
+      const bodyR = this.surfaceRadius(t);
 
       p.set(
-        -this.length * 0.5 + t * this.length,
+        this.xAt(t),
         Math.cos(a) * bodyR * 0.85,
         Math.sin(a) * bodyR
       );
@@ -335,6 +382,7 @@ export class RepoWhale {
     }
     mesh.instanceMatrix.needsUpdate = true;
     this.group.add(mesh);
+    this.barnacleMesh = mesh;
   }
 
   // -------------------------------------------------------------------------
@@ -380,8 +428,37 @@ export class RepoWhale {
     this._rq = new THREE.Quaternion();
     this._rs = new THREE.Vector3(1, 1, 1);
     this._rp = new THREE.Vector3();
-    this.group.add(mesh);
   }
+
+  /** Local x of the nose. Lathe body: -length/2. */
+  noseX() {
+    return this.sculptSize ? -this.sculptSize.x * 0.5 : -this.length * 0.5;
+  }
+
+  /** Local x of the tail stock. */
+  tailX() {
+    return this.sculptSize ? this.sculptSize.x * 0.44 : this.length * 0.5;
+  }
+
+  /** Local x at body fraction t (0 = nose, 1 = tail). */
+  xAt(t) {
+    const nose = this.noseX();
+    const tail = this.tailX();
+    return nose + (tail - nose) * THREE.MathUtils.clamp(t, 0, 1);
+  }
+
+  /**
+   * Skin radius at body fraction t (0 = nose, 1 = tail).
+   *
+   * The default is the lathe profile used to build the body. An imported sculpt
+   * overrides it with its measured profile so remoras and barnacles sit on the
+   * real skin instead of floating beside it.
+   */
+  surfaceRadius(t) {
+    const k = THREE.MathUtils.clamp(t, 0, 1);
+    return this.girth * (0.55 + Math.sin(k * Math.PI) * 0.45);
+  }
+
 
   // -------------------------------------------------------------------------
   // Blowhole + exhalation. Releases map to blows: each release is a spout.
@@ -393,7 +470,8 @@ export class RepoWhale {
       roughness: 0.7,
     });
     this.blowhole = new THREE.Mesh(geo, mat);
-    this.blowhole.position.set(-this.length * 0.34, this.girth * 0.95, 0);
+    // Blowhole sits on the dorsal surface above the eyes — about 22% back.
+    this.blowhole.position.set(this.xAt(0.22), this.surfaceRadius(0.22) * 1.02, 0);
     this.group.add(this.blowhole);
 
     // Exhalation — a soft additive plume. Only repos with releases have one.
@@ -410,7 +488,7 @@ export class RepoWhale {
         side: THREE.DoubleSide,
       });
       this.spout = new THREE.Mesh(sGeo, sMat);
-      this.spout.position.set(-this.length * 0.34, this.girth * 1.4, 0);
+      this.spout.position.set(this.xAt(0.22), this.surfaceRadius(0.22) * 1.3, 0);
       this.spout.rotation.x = Math.PI;
       this.spoutBaseY = this.spout.position.y;
       this.group.add(this.spout);
@@ -443,8 +521,8 @@ export class RepoWhale {
     for (let i = 0; i < count; i++) {
       const t = 0.05 + (i / count) * 0.32;
       const pleat = new THREE.Mesh(geo, mat);
-      const bodyR = this.girth * (0.55 + Math.sin(t * Math.PI) * 0.45);
-      pleat.position.set(-this.length * 0.5 + t * this.length, -bodyR * 0.55, 0);
+      const bodyR = this.surfaceRadius(t);
+      pleat.position.set(this.xAt(t), -bodyR * 0.55, 0);
       pleat.rotation.x = Math.PI / 2;
       pleat.rotation.z = Math.PI;
       pleat.scale.setScalar(1 - t * 0.4);
@@ -468,8 +546,12 @@ export class RepoWhale {
       this.skinUniforms.uTime.value = t;
     }
 
-    // Whole-body vertical oscillation, like a real swimming cetacean
+    // Whole-body vertical oscillation, like a real swimming cetacean.
+    // Stored on the instance (not a local) so a wrapper with its own body mesh
+    // can still drive the same swim cycle.
     const bodyY = Math.sin(t * beatSpeed) * this.girth * 0.1;
+    this.bodyY = bodyY;
+    this.beatSpeed = beatSpeed;
     this.group.position.y = bodyY;
 
     // Gentle roll
@@ -495,9 +577,9 @@ export class RepoWhale {
         const r = this.remoras[i];
         const a = r.a + t * 0.12 * r.speed;
         const tt = r.t + Math.sin(t * 0.3 + r.phase) * 0.03;
-        const bodyR = this.girth * (0.55 + Math.sin(tt * Math.PI) * 0.45);
+        const bodyR = this.surfaceRadius(tt);
         this._rp.set(
-          -this.length * 0.5 + tt * this.length,
+          this.xAt(tt),
           Math.cos(a) * bodyR * 1.05 + bodyY * 0.6,
           Math.sin(a) * bodyR * 1.25
         );

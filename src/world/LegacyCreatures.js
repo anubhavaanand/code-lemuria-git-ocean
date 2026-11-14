@@ -1,0 +1,1044 @@
+/**
+ * Git Ocean — Legacy creatures
+ *
+ * A kelp tower is the repository's skeleton. These are the organisms that live
+ * on it — the ones that turn a column of numbers into an ecosystem you can
+ * read at a glance.
+ *
+ * THE RULE (constitution, Scientific Accuracy): every creature below is driven
+ * by exactly one GitHub data point. If a creature cannot name the field it
+ * renders, it does not exist.
+ *
+ *   sponge          ← hasWiki          (a filter feeder: permanently attached, strains nutrients from the current)
+ *   barnacle ring   ← hasHomepage      (sessile, cements itself to the stipe and filters)
+ *   sea urchins     ← discussionsOpen  (grazers on the stipe; they cluster where there is food)
+ *   copepods        ← discussionsClosed(resolved grazers, tiny, drift off the base)
+ *   feather star    ← releases         (a crinoid: arms unfurl into the current to catch what drifts by)
+ *   amphipods       ← downloads        (scavengers swarming the holdfast where material collects)
+ *   parrotfish      ← hasChangelog     (grazes the stipe, leaves a visible scar line)
+ *   seahorse        ← preRelease       (hovers in the canopy, anchored by its tail)
+ *   grouper         ← branchCount      (a big ambush predator, sits still, occupies the whole radius)
+ *   cleaner wrasse  ← hasContributing  (small, fast, works the surface of the stipe)
+ *   anemone         ← hasCodeOfConduct (sessile, stinging tentacles, guards the base)
+ *   isopod          ← hasIssueTemplate (benthic scavenger, trundles over the sediment)
+ *   nudibranch      ← hasPRTemplate    (slow, brilliantly coloured, crawls the blades)
+ *   coral polyp     ← hasProjects      (colonial builder, adds to the reef structure)
+ *   lanternfish     ← hasDownloads     (a photophore that hangs in the water column)
+ *   basking shark   ← readmeLength     (a huge slow shadow passing behind the tower)
+ *   brain coral     ← readmeQuality    (a massive folded dome on the sediment: the better the README, the deeper the folds)
+ *   anglerfish lure ← securityScanning (an esca on an illicium, a light where you would not expect one)
+ *
+ * Anything that is simply "present or absent" renders as a boolean colony: one
+ * instance when present, nothing when absent. That is deliberate — a boolean
+ * signal should not be drawn as a magnitude.
+ */
+
+import * as THREE from "three";
+import { COLORS } from "./constants";
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+// Deterministic per-repo jitter so a tower looks the same every visit.
+function mulberry(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function hashString(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function clamp(v, lo, hi) {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+// A matte, slightly translucent body material. Cheaper than a shader and it
+// reads correctly at every distance because fog does the work.
+function flesh(color, opts = {}) {
+  return new THREE.MeshStandardMaterial({
+    color,
+    roughness: opts.roughness != null ? opts.roughness : 0.85,
+    metalness: 0.02,
+    transparent: opts.opacity != null && opts.opacity < 1,
+    opacity: opts.opacity != null ? opts.opacity : 1,
+    flatShading: !!opts.flat,
+  });
+}
+
+function emissive(color, strength = 1.4, opacity = 1) {
+  return new THREE.MeshStandardMaterial({
+    color,
+    emissive: new THREE.Color(color),
+    emissiveIntensity: strength,
+    roughness: 0.4,
+    transparent: opacity < 1,
+    opacity,
+  });
+}
+
+/**
+ * One instance of a creature, placed by a callback. Kept tiny on purpose: most
+ * of these are one or two draw calls.
+ */
+function place(mesh, x, y, z, scale, rotY = 0) {
+  mesh.position.set(x, y, z);
+  mesh.scale.setScalar(scale);
+  mesh.rotation.y = rotY;
+  return mesh;
+}
+
+// ---------------------------------------------------------------------------
+// LegacyColony — the container that owns every Legacy creature on one tower.
+// ---------------------------------------------------------------------------
+
+export class LegacyColony {
+  /**
+   * @param {object} repo   a worldData repo record
+   * @param {object} opts   { tower, quality, isMobile }
+   *   tower — the KelpTower instance, for height/girth and for parenting.
+   */
+  constructor(repo, opts = {}) {
+    this.repo = repo;
+    this.tower = opts.tower || null;
+    this.quality = opts.quality || "high";
+    this.isMobile = !!opts.isMobile;
+    this.disposables = [];
+    this.animated = [];
+    this.time = Math.random() * 100;
+
+    // The tower owns the transform, so parent to it and work in its local
+    // space: y=0 is the holdfast, +y runs up the stipe.
+    this.group = new THREE.Group();
+    this.group.name = `legacy:${repo.name}`;
+
+    this.rng = mulberry(hashString(repo.id || repo.name || "legacy"));
+    this.H = this.tower ? this.tower.height : 20;
+    this.G = this.tower ? this.tower.girth : 1.2;
+
+    this.build();
+  }
+
+  get root() {
+    return this.group;
+  }
+
+  // Height of a given fraction of the stipe — the only way anything attaches.
+  yAt(f) {
+    return this.H * f;
+  }
+
+  // Radius of the stipe at a given height fraction. The stipe tapers, so a
+  // creature that ignores this either floats or intersects.
+  rAt(f) {
+    return this.G * (0.34 - 0.18 * clamp(f, 0, 1));
+  }
+
+  build() {
+    // Order matters only for readability: benthic first (they define the
+    // footprint), then the stipe dwellers, then the water-column animals.
+    this.buildBrainCoral(); //    ← readmeQuality
+    this.buildAnemone(); //       ← codeOfConduct
+    this.buildIsopod(); //        ← issueTemplate
+    this.buildSeaUrchins(); //    ← open discussions
+    this.buildCopepods(); //      ← closed discussions
+    this.buildBarnacleRing(); //  ← hasHomepage
+    this.buildSponge(); //        ← hasWiki
+    this.buildFeatherStar(); //   ← releases
+    this.buildAmphipods(); //     ← downloads
+    this.buildCoralPolyp(); //    ← hasProjects
+    this.buildParrotfish(); //    ← hasChangelog
+    this.buildNudibranch(); //     ← pullRequestTemplate
+    this.buildSeahorse(); //      ← preRelease
+    this.buildGrouper(); //       ← branchCount
+    this.buildCleanerWrasse(); // ← contributingGuide
+    this.buildLanternfish(); //    ← downloadsEnabled
+    this.buildBaskingShark(); //   ← readmeLength
+    this.buildAnglerfish(); //     ← securityScanning
+  }
+
+  // -------------------------------------------------------------------------
+  // Benthic — lives on the sediment, not the stipe
+  // -------------------------------------------------------------------------
+
+  /**
+   * Brain coral ← readmeQuality.
+   * A dome with meandering grooves. The deeper and more convoluted the folds,
+   * the better the README — a good README has structure, a bad one is a lump.
+   */
+  buildBrainCoral() {
+    const q = clamp(this.repo.readmeQuality != null ? this.repo.readmeQuality : 0.5, 0, 1);
+    if (q < 0.05) return;
+
+    const R = this.G * (1.1 + q * 2.2);
+    const geo = new THREE.SphereGeometry(R, this.isMobile ? 12 : 20, this.isMobile ? 8 : 12, 0, Math.PI * 2, 0, Math.PI * 0.5);
+    // Squash into a dome
+    geo.scale(1, 0.55 + q * 0.25, 1);
+
+    const mat = flesh(0x9a8c6a, { flat: true, roughness: 0.95 });
+    const dome = new THREE.Mesh(geo, mat);
+    dome.position.y = 0;
+    dome.receiveShadow = true;
+
+    // Grooves: concentric ridges whose count and depth ARE the quality. A
+    // low-quality README is nearly smooth; a high-quality one is deeply folded.
+    const folds = Math.round(2 + q * 9);
+    const foldDepth = 0.06 + q * 0.16;
+    for (let i = 0; i < folds; i++) {
+      const t = (i + 1) / (folds + 1);
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(R * t * 0.98, R * foldDepth * 0.4, 5, this.isMobile ? 16 : 28),
+        mat
+      );
+      ring.rotation.x = Math.PI / 2;
+      ring.position.y = R * (0.55 + q * 0.25) * Math.sqrt(Math.max(0, 1 - t * t)) * 0.92;
+      dome.add(ring);
+    }
+
+    const a = this.rng() * Math.PI * 2;
+    const d = this.G * (2.6 + this.rng() * 2.4);
+    dome.position.x = Math.cos(a) * d;
+    dome.position.z = Math.sin(a) * d;
+    dome.rotation.y = this.rng() * Math.PI;
+    this.group.add(dome);
+    this.brainCoral = dome;
+  }
+
+  /** Anemone ← codeOfConduct. A sessile polyp with stinging tentacles. */
+  buildAnemone() {
+    if (!this.repo.hasCodeOfConduct) return;
+
+    const base = new THREE.Mesh(
+      new THREE.CylinderGeometry(this.G * 0.5, this.G * 0.72, this.G * 0.5, 9),
+      flesh(0x8a5a6a)
+    );
+    const a = this.rng() * Math.PI * 2;
+    const d = this.G * (2.2 + this.rng() * 1.8);
+    base.position.set(Math.cos(a) * d, this.G * 0.25, Math.sin(a) * d);
+    this.group.add(base);
+
+    // Tentacles: a ring of thin tapered cones. Their count is fixed because
+    // the signal is boolean — presence is the message, not quantity.
+    const n = this.isMobile ? 9 : 16;
+    const tMat = emissive(0xc06a8a, 0.55);
+    const tGeo = new THREE.ConeGeometry(this.G * 0.07, this.G * 0.9, 4);
+    tGeo.translate(0, this.G * 0.45, 0);
+    const tentacles = new THREE.InstancedMesh(tGeo, tMat, n);
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const e = new THREE.Euler();
+    const p = new THREE.Vector3();
+    const s = new THREE.Vector3(1, 1, 1);
+
+    for (let i = 0; i < n; i++) {
+      const th = (i / n) * Math.PI * 2;
+      const lean = 0.35 + this.rng() * 0.3;
+      e.set(Math.cos(th) * lean, th, Math.sin(th) * lean);
+      q.setFromEuler(e);
+      p.set(Math.cos(th) * this.G * 0.3, this.G * 0.45, Math.sin(th) * this.G * 0.3);
+      m.compose(p, q, s);
+      tentacles.setMatrixAt(i, m);
+    }
+    tentacles.instanceMatrix.needsUpdate = true;
+    base.add(tentacles);
+    this.anemone = base;
+
+    // Slow pulse — anemones breathe by contracting
+    this.animated.push((t) => {
+      const k = 1 + Math.sin(t * 0.55) * 0.07;
+      tentacles.scale.set(k, 1 / k, k);
+    });
+  }
+
+  /** Isopod ← issueTemplate. A benthic scavenger trundling the sediment. */
+  buildIsopod() {
+    if (!this.repo.hasIssueTemplate) return;
+
+    const seg = 6;
+    const body = new THREE.Group();
+    const mat = flesh(0x6a6258, { flat: true, roughness: 0.7 });
+    for (let i = 0; i < seg; i++) {
+      const t = i / (seg - 1);
+      const r = this.G * (0.34 - Math.abs(t - 0.45) * 0.24);
+      const plate = new THREE.Mesh(new THREE.SphereGeometry(r, 7, 5), mat);
+      plate.scale.set(1, 0.55, 0.85);
+      plate.position.z = (t - 0.5) * this.G * 1.5;
+      body.add(plate);
+    }
+    const a = this.rng() * Math.PI * 2;
+    const d = this.G * (3 + this.rng() * 2);
+    body.position.set(Math.cos(a) * d, this.G * 0.18, Math.sin(a) * d);
+    body.rotation.y = this.rng() * Math.PI * 2;
+    this.group.add(body);
+    this.isopod = body;
+
+    const baseA = body.rotation.y;
+    const radius = Math.hypot(body.position.x, body.position.z);
+    const a0 = Math.atan2(body.position.z, body.position.x);
+    this.animated.push((t) => {
+      // Trundle: a slow, wobbly circuit of the holdfast
+      const th = a0 + Math.sin(t * 0.11) * 0.9;
+      body.position.x = Math.cos(th) * radius;
+      body.position.z = Math.sin(th) * radius;
+      body.rotation.y = baseA + Math.sin(t * 0.22) * 0.6;
+      body.position.y = this.G * 0.18 + Math.abs(Math.sin(t * 1.1)) * this.G * 0.05;
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // On the stipe — grazers, filter feeders, hitchhikers
+  // -------------------------------------------------------------------------
+
+  /**
+   * Sea urchins ← open discussions.
+   * Grazers cluster where there is food. Each urchin is a spined ball; the
+   * count is the count of open discussions, capped by space on the stipe.
+   */
+  buildSeaUrchins() {
+    const n = clamp(Math.round((this.repo.discussionsOpen || 0) * 0.6), 0, this.isMobile ? 8 : 18);
+    if (n === 0) return;
+
+    const R = this.G * 0.3;
+    const bodyMat = flesh(0x3a2a3a, { flat: true, roughness: 0.6 });
+
+    for (let i = 0; i < n; i++) {
+      const urchin = new THREE.Group();
+      const core = new THREE.Mesh(new THREE.SphereGeometry(R, 7, 5), bodyMat);
+      urchin.add(core);
+
+      // Spines — the visual signature of an echinoid. Instanced per urchin so
+      // each one still costs a single draw call.
+      const spines = this.isMobile ? 10 : 18;
+      const sGeo = new THREE.ConeGeometry(R * 0.1, R * 1.5, 3);
+      sGeo.translate(0, R * 0.75, 0);
+      const sMesh = new THREE.InstancedMesh(sGeo, flesh(0x5a3a5a, { flat: true }), spines);
+      const m = new THREE.Matrix4();
+      const q = new THREE.Quaternion();
+      const e = new THREE.Euler();
+      const p = new THREE.Vector3();
+      const s = new THREE.Vector3(1, 1, 1);
+      for (let k = 0; k < spines; k++) {
+        // Fibonacci sphere — even coverage without clumping
+        const y = 1 - (k / (spines - 1)) * 2;
+        const rad = Math.sqrt(Math.max(0, 1 - y * y));
+        const phi = k * 2.399963;
+        const dir = new THREE.Vector3(Math.cos(phi) * rad, y, Math.sin(phi) * rad).normalize();
+        q.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+        m.compose(new THREE.Vector3(0, 0, 0), q, s);
+        sMesh.setMatrixAt(k, m);
+      }
+      sMesh.instanceMatrix.needsUpdate = true;
+      urchin.add(sMesh);
+
+      // Sit on the stipe surface, biased low where drift algae settles
+      const f = 0.06 + this.rng() * 0.34;
+      const th = this.rng() * Math.PI * 2;
+      const r = this.rAt(f) + R * 0.55;
+      urchin.position.set(Math.cos(th) * r, this.yAt(f), Math.sin(th) * r);
+      urchin.rotation.set(this.rng() * 3, this.rng() * 3, this.rng() * 3);
+      this.group.add(urchin);
+
+      if (!this.isMobile) {
+        const phase = this.rng() * 6.28;
+        const y0 = urchin.position.y;
+        this.animated.push((t) => {
+          // Grazers inch upward; the spines catch the current and rock them
+          urchin.position.y = y0 + Math.sin(t * 0.16 + phase) * this.G * 0.22;
+          urchin.rotation.z += Math.sin(t * 0.4 + phase) * 0.0009;
+        });
+      }
+    }
+    this.urchins = n;
+  }
+
+  /**
+   * Copepods ← closed discussions.
+   * Resolved, so they have moved on: tiny, translucent, drifting off the base.
+   */
+  buildCopepods() {
+    const n = clamp(Math.round((this.repo.discussionsClosed || 0) * 0.8), 0, this.isMobile ? 10 : 22);
+    if (n === 0) return;
+
+    const geo = new THREE.CapsuleGeometry(this.G * 0.045, this.G * 0.16, 3, 5);
+    geo.rotateZ(Math.PI / 2);
+    const mat = emissive(0x9fd8c0, 0.35, 0.62);
+    const mesh = new THREE.InstancedMesh(geo, mat, n);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.frustumCulled = false;
+    this.group.add(mesh);
+
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const p = new THREE.Vector3();
+    const s = new THREE.Vector3(1, 1, 1);
+
+    const bugs = [];
+    for (let i = 0; i < n; i++) {
+      const a0 = this.rng() * Math.PI * 2;
+      const rad = this.G * (1.8 + this.rng() * 3.4);
+      const y0 = this.G * (0.3 + this.rng() * this.H * 0.22);
+      bugs.push({
+        a0,
+        rad,
+        y0,
+        spin: (this.rng() - 0.5) * 0.35,
+        bob: this.rng() * 6.28,
+        sc: 0.7 + this.rng() * 0.6,
+      });
+      p.set(Math.cos(a0) * rad, y0, Math.sin(a0) * rad);
+      m.compose(p, q, s.set(bugs[i].sc, bugs[i].sc, bugs[i].sc));
+      mesh.setMatrixAt(i, m);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+
+    this.animated.push((t) => {
+      for (let i = 0; i < n; i++) {
+        const b = bugs[i];
+        const th = b.a0 + t * b.spin;
+        p.set(
+          Math.cos(th) * b.rad,
+          b.y0 + Math.sin(t * 0.9 + b.bob) * this.G * 0.35,
+          Math.sin(th) * b.rad
+        );
+        q.setFromEuler(new THREE.Euler(0, -th, Math.sin(t * 2 + b.bob) * 0.3));
+        m.compose(p, q, s.set(b.sc, b.sc, b.sc));
+        mesh.setMatrixAt(i, m);
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+    });
+  }
+
+  /**
+   * Feather star ← releases.
+   * A crinoid: it climbs the stipe and unfurls its arms into the current.
+   * Every release is another arm, because a release is something thrown out
+   * into the water to be caught.
+   */
+  buildFeatherStar() {
+    const rel = this.repo.releases || 0;
+    if (rel <= 0) return;
+
+    const arms = clamp(rel, 1, this.isMobile ? 6 : 11);
+    const crinoid = new THREE.Group();
+    const mat = flesh(0xc86a7a, { flat: true, roughness: 0.65 });
+
+    // Calyx — the small body the arms radiate from
+    const calyx = new THREE.Mesh(new THREE.SphereGeometry(this.G * 0.26, 8, 6), mat);
+    calyx.scale.set(1, 1.4, 1);
+    crinoid.add(calyx);
+
+    const armGeo = new THREE.CylinderGeometry(this.G * 0.025, this.G * 0.06, this.G * 2.4, 4);
+    armGeo.translate(0, this.G * 1.2, 0);
+    const armMeshes = [];
+    for (let i = 0; i < arms; i++) {
+      const arm = new THREE.Mesh(armGeo, mat);
+      const th = (i / arms) * Math.PI * 2;
+      arm.rotation.z = Math.cos(th) * 0.85;
+      arm.rotation.x = Math.sin(th) * 0.85;
+      // Pinnules: feathery side branches, the thing that makes it a feather star
+      if (!this.isMobile) {
+        for (let k = 1; k <= 4; k++) {
+          const pin = new THREE.Mesh(
+            new THREE.CylinderGeometry(this.G * 0.008, this.G * 0.018, this.G * 0.34, 3),
+            mat
+          );
+          pin.position.y = this.G * 0.35 * k;
+          pin.rotation.z = 0.9;
+          arm.add(pin);
+        }
+      }
+      crinoid.add(arm);
+      armMeshes.push({ arm, th });
+    }
+
+    // Perched on the stipe, arms spread into the current
+    const f = 0.2 + this.rng() * 0.5;
+    const th = this.rng() * Math.PI * 2;
+    const r = this.rAt(f) + this.G * 0.2;
+    crinoid.position.set(Math.cos(th) * r, this.yAt(f), Math.sin(th) * r);
+    crinoid.rotation.y = th;
+    this.group.add(crinoid);
+    this.featherStar = crinoid;
+
+    this.animated.push((t) => {
+      // Arms unfurl and sweep — a crinoid is a passive suspension feeder, so
+      // it holds its arms into the current and lets them flex.
+      const k = Math.sin(t * 0.35) * 0.5 + 0.5;
+      for (let i = 0; i < armMeshes.length; i++) {
+        const { arm, th: a } = armMeshes[i];
+        const spread = 0.6 + k * 0.35;
+        arm.rotation.z = Math.cos(a) * spread;
+        arm.rotation.x = Math.sin(a) * spread;
+      }
+    });
+  }
+
+  /**
+   * Amphipods ← downloads.
+   * Scavengers swarming the holdfast where material collects.
+   */
+  buildAmphipods() {
+    const n = clamp(Math.round(Math.sqrt(this.repo.downloads || 0) * 0.5), 0, this.isMobile ? 9 : 20);
+    if (n === 0) return;
+
+    const geo = new THREE.CapsuleGeometry(this.G * 0.05, this.G * 0.22, 3, 5);
+    geo.rotateZ(Math.PI / 2);
+    const mesh = new THREE.InstancedMesh(geo, flesh(0xb8a888, { flat: true, roughness: 0.6 }), n);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.frustumCulled = false;
+    this.group.add(mesh);
+
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const p = new THREE.Vector3();
+    const s = new THREE.Vector3();
+
+    const bugs = [];
+    for (let i = 0; i < n; i++) {
+      bugs.push({
+        a: this.rng() * Math.PI * 2,
+        r: this.G * (0.9 + this.rng() * 2.6),
+        y: this.G * (0.06 + this.rng() * 0.28),
+        sp: (0.25 + this.rng() * 0.55) * (this.rng() < 0.5 ? 1 : -1),
+        ph: this.rng() * 6.28,
+        sc: 0.6 + this.rng() * 0.7,
+      });
+    }
+
+    this.animated.push((t) => {
+      for (let i = 0; i < n; i++) {
+        const b = bugs[i];
+        const th = b.a + t * b.sp;
+        // Scuttle in and out of the holdfast — they are always moving
+        const rr = b.r + Math.sin(t * 1.6 + b.ph) * this.G * 0.35;
+        p.set(Math.cos(th) * rr, b.y + Math.abs(Math.sin(t * 2.2 + b.ph)) * this.G * 0.12, Math.sin(th) * rr);
+        q.setFromEuler(new THREE.Euler(0, -th + Math.PI / 2, Math.sin(t * 3 + b.ph) * 0.25));
+        m.compose(p, q, s.setScalar(b.sc));
+        mesh.setMatrixAt(i, m);
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+    });
+  }
+
+  /**
+   * Barnacle ring ← hasHomepage.
+   * Sessile filter feeders that cement themselves to the stipe. Presence only.
+   */
+  buildBarnacleRing() {
+    // A live link is what the data actually carries (homepageUrl). `homepage`
+    // is an empty string when unset, so treat that as absent rather than
+    // inventing a separate boolean that the API layer would have to keep in sync.
+    if (!this.repo.hasHomepage && !this.repo.homepage) return;
+
+    const n = this.isMobile ? 7 : 14;
+    const geo = new THREE.ConeGeometry(this.G * 0.13, this.G * 0.22, 6, 1, true);
+    const mat = flesh(0xcfc6b0, { flat: true, roughness: 0.9 });
+    const ring = new THREE.InstancedMesh(geo, mat, n);
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const e = new THREE.Euler();
+    const p = new THREE.Vector3();
+    const s = new THREE.Vector3(1, 1, 1);
+
+    // A ring around the holdfast — barnacles settle in the current-swept band
+    const f = 0.03 + this.rng() * 0.06;
+    const y = this.yAt(f);
+    const r = this.rAt(f) + this.G * 0.3;
+    for (let i = 0; i < n; i++) {
+      const th = (i / n) * Math.PI * 2 + this.rng() * 0.2;
+      p.set(Math.cos(th) * r, y + (this.rng() - 0.5) * this.G * 0.3, Math.sin(th) * r);
+      // Cones point outward from the stipe
+      e.set(Math.PI / 2 - 0.4, -th, 0);
+      q.setFromEuler(e);
+      m.compose(p, q, s.setScalar(0.7 + this.rng() * 0.7));
+      ring.setMatrixAt(i, m);
+    }
+    ring.instanceMatrix.needsUpdate = true;
+    this.group.add(ring);
+    this.barnacleRing = ring;
+  }
+
+  /** Sponge ← hasWiki. A permanently attached filter feeder on the stipe. */
+  buildSponge() {
+    if (!this.repo.hasWiki) return;
+
+    const R = this.G * (0.6 + this.rng() * 0.4);
+    const geo = new THREE.CylinderGeometry(R * 0.7, R, R * (2.2 + this.rng()), 9, 1, true);
+    const mat = flesh(0x7a6a4a, { flat: true, roughness: 0.95 });
+    const sponge = new THREE.Mesh(geo, mat);
+
+    // Osculum — the excurrent opening that makes a sponge a sponge
+    const lip = new THREE.Mesh(new THREE.TorusGeometry(R * 0.7, R * 0.12, 5, 12), mat);
+    lip.rotation.x = Math.PI / 2;
+    lip.position.y = R * (2.2 + 0.5);
+    sponge.add(lip);
+
+    const th = this.rng() * Math.PI * 2;
+    const f = 0.14 + this.rng() * 0.22;
+    const r = this.rAt(f) + R * 0.85;
+    const h = R * 1.1;
+    sponge.position.set(Math.cos(th) * r, this.yAt(f) + h * 0.2, Math.sin(th) * r);
+    sponge.rotation.z = Math.cos(th) * 0.25;
+    sponge.rotation.x = Math.sin(th) * 0.25;
+    this.group.add(sponge);
+    this.sponge = sponge;
+  }
+
+  // -------------------------------------------------------------------------
+  // Water column and canopy — the ones that move through the tower's space
+  // -------------------------------------------------------------------------
+
+  /** Parrotfish ← hasChangelog. Grazes the stipe and leaves a scar line. */
+  buildParrotfish() {
+    if (!this.repo.hasChangelog) return;
+
+    const fish = new THREE.Group();
+    const mat = flesh(0x3aa88a, { flat: true, roughness: 0.55 });
+
+    const bodyGeo = new THREE.SphereGeometry(this.G * 0.3, 9, 7);
+    bodyGeo.scale(1.9, 0.85, 0.55);
+    const body = new THREE.Mesh(bodyGeo, mat);
+    fish.add(body);
+
+    // The beak is the identifying feature of a scarid — fused jaw plates
+    const beak = new THREE.Mesh(new THREE.ConeGeometry(this.G * 0.13, this.G * 0.3, 5), flesh(0xd8e8d0, { flat: true }));
+    beak.rotation.z = -Math.PI / 2;
+    beak.position.x = this.G * 0.62;
+    fish.add(beak);
+
+    const tail = new THREE.Mesh(new THREE.ConeGeometry(this.G * 0.22, this.G * 0.42, 4), mat);
+    tail.rotation.z = Math.PI / 2;
+    tail.position.x = -this.G * 0.62;
+    tail.scale.set(1, 1, 0.35);
+    fish.add(tail);
+
+    // Grow a pale scar band on the stipe: a changelog means the repo has
+    // been maintained through versions, and that leaves a mark.
+    const scar = new THREE.Mesh(
+      new THREE.TorusGeometry(this.rAt(0.3) * 1.01, this.G * 0.03, 4, 20),
+      emissive(0xbfe0c8, 0.22, 0.5)
+    );
+    scar.rotation.x = Math.PI / 2;
+    scar.position.y = this.yAt(0.3);
+    this.group.add(scar);
+
+    const f = 0.28 + this.rng() * 0.3;
+    const y = this.yAt(f);
+    const r = this.rAt(f) + this.G * 1.6;
+    fish.position.set(r, y, 0);
+    this.group.add(fish);
+    this.parrotfish = fish;
+
+    this.animated.push((t) => {
+      // Grazing circuit: slow, with a scrape at the stipe and a turn away
+      const th = Math.sin(t * 0.19) * 1.5;
+      fish.position.set(Math.cos(th) * r, y + Math.sin(t * 0.4) * this.G * 0.4, Math.sin(th) * r);
+      fish.rotation.y = -th + Math.PI / 2;
+      fish.rotation.z = Math.sin(t * 1.6) * 0.06;
+      tail.rotation.y = Math.sin(t * 3.4) * 0.4;
+    });
+  }
+
+  /** Seahorse ← preRelease. Hovers in the canopy, anchored by its tail. */
+  buildSeahorse() {
+    if (!this.repo.preRelease) return;
+
+    const horse = new THREE.Group();
+    const mat = flesh(0xd8a848, { flat: true, roughness: 0.7 });
+
+    // Upright body — seahorses are the one fish that swims vertically
+    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(this.G * 0.13, this.G * 0.42, 4, 7), mat);
+    torso.position.y = this.G * 0.1;
+    horse.add(torso);
+
+    const head = new THREE.Mesh(new THREE.SphereGeometry(this.G * 0.11, 7, 5), mat);
+    head.position.y = this.G * 0.44;
+    horse.add(head);
+
+    const snout = new THREE.Mesh(new THREE.CylinderGeometry(this.G * 0.03, this.G * 0.05, this.G * 0.2, 5), mat);
+    snout.rotation.x = Math.PI / 2.6;
+    snout.position.set(0, this.G * 0.44, this.G * 0.11);
+    horse.add(snout);
+
+    // Prehensile tail, curled around the stipe
+    const tail = new THREE.Mesh(new THREE.TorusGeometry(this.G * 0.13, this.G * 0.035, 4, 10, Math.PI * 1.5), mat);
+    tail.position.y = -this.G * 0.26;
+    tail.rotation.y = Math.PI / 2;
+    horse.add(tail);
+
+    const f = 0.68 + this.rng() * 0.24;
+    const th = this.rng() * Math.PI * 2;
+    const r = this.rAt(f) + this.G * 0.35;
+    horse.position.set(Math.cos(th) * r, this.yAt(f), Math.sin(th) * r);
+    horse.rotation.y = -th;
+    this.group.add(horse);
+    this.seahorse = horse;
+
+    this.animated.push((t) => {
+      // Hovers in place with a tiny bob — it is anchored, not swimming
+      horse.position.y = this.yAt(f) + Math.sin(t * 0.8) * this.G * 0.07;
+      horse.rotation.y = -th + Math.sin(t * 0.3) * 0.25;
+      horse.rotation.z = Math.sin(t * 0.55) * 0.05;
+    });
+  }
+
+  /**
+   * Grouper ← branchCount.
+   * An ambush predator: big, sits still, occupies the whole radius. More
+   * branches = more territory claimed.
+   */
+  buildGrouper() {
+    const b = this.repo.branchCount || 0;
+    if (b < 2) return;
+
+    const size = clamp(0.6 + Math.sqrt(b) * 0.16, 0.6, 2.2);
+    const fish = new THREE.Group();
+    const mat = flesh(0x6a5a48, { flat: true, roughness: 0.9 });
+
+    const bodyGeo = new THREE.SphereGeometry(this.G * 0.42, 9, 7);
+    bodyGeo.scale(1.5, 0.95, 0.72);
+    fish.add(new THREE.Mesh(bodyGeo, mat));
+
+    const head = new THREE.Mesh(new THREE.SphereGeometry(this.G * 0.28, 8, 6), mat);
+    head.position.x = this.G * 0.5;
+    fish.add(head);
+
+    const jaw = new THREE.Mesh(new THREE.BoxGeometry(this.G * 0.32, this.G * 0.14, this.G * 0.4), mat);
+    jaw.position.set(this.G * 0.66, -this.G * 0.1, 0);
+    fish.add(jaw);
+
+    const tail = new THREE.Mesh(new THREE.ConeGeometry(this.G * 0.3, this.G * 0.4, 4), mat);
+    tail.rotation.z = Math.PI / 2;
+    tail.position.x = -this.G * 0.72;
+    tail.scale.set(1, 1, 0.4);
+    fish.add(tail);
+
+    fish.scale.setScalar(size);
+
+    const f = 0.3 + this.rng() * 0.35;
+    const y = this.yAt(f);
+    const r = this.rAt(f) + this.G * (2.4 + size);
+    const a0 = this.rng() * Math.PI * 2;
+    fish.position.set(Math.cos(a0) * r, y, Math.sin(a0) * r);
+    fish.rotation.y = -a0;
+    this.group.add(fish);
+    this.grouper = fish;
+
+    this.animated.push((t) => {
+      // Ambush: barely moves. A slow drift with occasional darts.
+      const dart = Math.max(0, Math.sin(t * 0.13)) ** 8;
+      const th = a0 + dart * 0.7;
+      fish.position.set(Math.cos(th) * r, y + Math.sin(t * 0.24) * this.G * 0.3, Math.sin(th) * r);
+      fish.rotation.y = -th;
+      fish.rotation.z = Math.sin(t * 0.7) * 0.04;
+    });
+  }
+
+  /**
+   * Cleaner wrasse ← contributingGuide.
+   * Small, fast, works the surface of the stipe — it cleans what it touches.
+   */
+  buildCleanerWrasse() {
+    if (!this.repo.hasContributing) return;
+
+    const n = this.isMobile ? 2 : 4;
+    const fish = new THREE.Group();
+    const mat = emissive(0x4ac8e0, 0.4, 0.9);
+    const bodyGeo = new THREE.SphereGeometry(this.G * 0.1, 7, 5);
+    bodyGeo.scale(2.4, 0.7, 0.4);
+
+    const members = [];
+    for (let i = 0; i < n; i++) {
+      const f = new THREE.Mesh(bodyGeo, mat);
+      fish.add(f);
+      members.push({ mesh: f, ph: this.rng() * 6.28, off: this.rng() * 6.28 });
+    }
+    this.group.add(fish);
+    this.cleanerWrasse = fish;
+
+    this.animated.push((t) => {
+      for (const m of members) {
+        // Darts up and down the stipe, hugging the surface
+        const f = 0.12 + (Math.sin(t * 0.7 + m.ph) * 0.5 + 0.5) * 0.6;
+        const th = m.off + t * 0.5;
+        const r = this.rAt(f) + this.G * 0.42;
+        m.mesh.position.set(Math.cos(th) * r, this.yAt(f), Math.sin(th) * r);
+        m.mesh.rotation.y = -th + Math.PI / 2;
+      }
+    });
+  }
+
+  /** Coral polyp ← hasProjects. A colonial builder on the stipe. */
+  buildCoralPolyp() {
+    if (!this.repo.hasProjects) return;
+
+    const n = this.isMobile ? 5 : 11;
+    const mat = flesh(0xc87a9a, { flat: true, roughness: 0.8 });
+    const polypGeo = new THREE.CylinderGeometry(this.G * 0.06, this.G * 0.1, this.G * 0.3, 6);
+    const polyps = [];
+
+    for (let i = 0; i < n; i++) {
+      const f = 0.1 + this.rng() * 0.55;
+      const th = this.rng() * Math.PI * 2;
+      const r = this.rAt(f) + this.G * 0.16;
+      const p = new THREE.Mesh(polypGeo, mat);
+      p.position.set(Math.cos(th) * r, this.yAt(f), Math.sin(th) * r);
+      p.rotation.z = Math.cos(th) * 0.6;
+      p.rotation.x = Math.sin(th) * 0.6;
+      this.group.add(p);
+
+      // Tentacle crown — a polyp is a ring of tentacles around a mouth
+      const crown = new THREE.Mesh(
+        new THREE.TorusGeometry(this.G * 0.08, this.G * 0.018, 4, 8),
+        emissive(0xe8a0b8, 0.5)
+      );
+      crown.rotation.x = Math.PI / 2;
+      crown.position.y = this.G * 0.16;
+      p.add(crown);
+      polyps.push(p);
+    }
+    this.coralPolyp = polyps;
+  }
+
+  /**
+   * Lanternfish ← downloadsEnabled.
+   * A photophore hanging in the water column — the one Legacy creature that is
+   * pure light, because its signal is a capability rather than a quantity.
+   */
+  buildLanternfish() {
+    if (!this.repo.hasDownloadsEnabled) return;
+
+    const n = this.isMobile ? 2 : 4;
+    const lamps = [];
+    for (let i = 0; i < n; i++) {
+      const light = new THREE.Mesh(
+        new THREE.SphereGeometry(this.G * 0.1, 7, 5),
+        emissive(0x8fd8ff, 2.2, 0.95)
+      );
+      // Photophores trail below the canopy like a string of lamps
+      const f = 0.55 + this.rng() * 0.4;
+      const th = this.rng() * Math.PI * 2;
+      const r = this.rAt(f) + this.G * (1.2 + this.rng() * 1.8);
+      light.position.set(Math.cos(th) * r, this.yAt(f), Math.sin(th) * r);
+      this.group.add(light);
+
+      const ph = this.rng() * 6.28;
+      const y0 = light.position.y;
+      const a0 = th;
+      const rad = r;
+      this.animated.push((t) => {
+        // Hangs and drifts, pulsing — a lanternfish's photophores blink
+        const pulse = 0.6 + (Math.sin(t * 1.4 + ph) * 0.5 + 0.5) * 0.8;
+        light.scale.setScalar(pulse);
+        const th2 = a0 + t * 0.05;
+        light.position.set(Math.cos(th2) * rad, y0 + Math.sin(t * 0.35 + ph) * this.G * 0.3, Math.sin(th2) * rad);
+      });
+      lamps.push(light);
+    }
+    this.lanternfish = lamps;
+  }
+
+  /** Nudibranch ← pullRequestTemplate. Slow, brilliant, crawls the blades. */
+  buildNudibranch() {
+    if (!this.repo.hasPRTemplate) return;
+
+    const n = this.isMobile ? 1 : 3;
+    const mat = emissive(0xff7ad8, 0.55, 0.95);
+    const slugs = [];
+
+    for (let i = 0; i < n; i++) {
+      const slug = new THREE.Group();
+      const bodyGeo = new THREE.SphereGeometry(this.G * 0.11, 7, 5);
+      bodyGeo.scale(2.2, 0.5, 0.8);
+      slug.add(new THREE.Mesh(bodyGeo, mat));
+
+      // Rhinophores — the two stalks that make a nudibranch a nudibranch
+      for (const s of [-1, 1]) {
+        const rh = new THREE.Mesh(new THREE.CylinderGeometry(this.G * 0.012, this.G * 0.02, this.G * 0.16, 4), mat);
+        rh.position.set(this.G * 0.14, this.G * 0.08, s * this.G * 0.03);
+        slug.add(rh);
+      }
+
+      const f0 = 0.3 + this.rng() * 0.5;
+      const th0 = this.rng() * Math.PI * 2;
+      this.group.add(slug);
+      slugs.push(slug);
+      const ph = this.rng() * 6.28;
+
+      this.animated.push((t) => {
+        // Crawls slowly upward — a nudibranch grazes as it goes
+        const f = f0 + Math.sin(t * 0.05 + ph) * 0.18;
+        const th = th0 + t * 0.035;
+        const r = this.rAt(f) + this.G * 0.2;
+        slug.position.set(Math.cos(th) * r, this.yAt(f), Math.sin(th) * r);
+        slug.rotation.y = -th + Math.PI / 2;
+        slug.rotation.z = Math.sin(t * 0.4 + ph) * 0.08;
+      });
+    }
+    this.nudibranch = slugs;
+  }
+
+  /**
+   * Basking shark ← readmeLength.
+   * A huge, slow shadow passing behind the tower. The longer the README, the
+   * bigger the animal and the slower it goes.
+   */
+  buildBaskingShark() {
+    const len = clamp(this.repo.readmeLength || 0, 0, 12000);
+    if (len < 60) return;
+
+    const k = clamp(Math.sqrt(len / 6000), 0.25, 1.6);
+    const L = this.H * 0.9 * k;
+
+    const shark = new THREE.Group();
+    // A basking shark is a dark silhouette with a huge mouth. Render it as an
+    // unlit dark shape so it reads as a shadow rather than an object.
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0x0a1a26,
+      transparent: true,
+      opacity: 0.5,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+
+    const bodyGeo = new THREE.SphereGeometry(L * 0.16, 10, 7);
+    bodyGeo.scale(1, 0.8, 3.6);
+    shark.add(new THREE.Mesh(bodyGeo, mat));
+
+    // Dorsal fin
+    const dorsal = new THREE.Mesh(new THREE.ConeGeometry(L * 0.07, L * 0.22, 3), mat);
+    dorsal.position.set(0, L * 0.14, 0);
+    shark.add(dorsal);
+
+    // Tail
+    const tail = new THREE.Mesh(new THREE.ConeGeometry(L * 0.11, L * 0.3, 3), mat);
+    tail.rotation.x = Math.PI / 2;
+    tail.position.z = -L * 0.6;
+    shark.add(tail);
+
+    // The gill slits of a basking shark are enormous — that is the whole point
+    // of the animal. Three dark bands behind the head.
+    if (!this.isMobile) {
+      for (let i = 0; i < 3; i++) {
+        const slit = new THREE.Mesh(new THREE.TorusGeometry(L * 0.09, L * 0.012, 4, 10, Math.PI), mat);
+        slit.rotation.y = Math.PI / 2;
+        slit.position.set(0, 0, L * 0.28 - i * L * 0.07);
+        shark.add(slit);
+      }
+    }
+
+    shark.position.set(0, this.yAt(0.75), -this.G * 9);
+    this.group.add(shark);
+    this.baskingShark = shark;
+
+    this.animated.push((t) => {
+      // A slow figure-eight behind the tower. Big animal, slow passage.
+      const th = t * 0.06;
+      const R = this.G * 10;
+      shark.position.set(
+        Math.sin(th) * R,
+        this.yAt(0.75) + Math.sin(t * 0.11) * this.H * 0.12,
+        -this.G * 9 + Math.cos(th) * R * 0.4
+      );
+      shark.rotation.y = -Math.atan2(Math.cos(th) * R, -Math.sin(th) * R * 0.4) + Math.PI / 2;
+      shark.rotation.z = Math.sin(t * 0.2) * 0.05;
+    });
+  }
+
+  /**
+   * Anglerfish lure ← securityScanning.
+   * An esca on an illicium: a light where you would not expect one. Security
+   * scanning is exactly that — a light in a place you would rather not look.
+   */
+  buildAnglerfish() {
+    if (!this.repo.securityScanning) return;
+
+    const fish = new THREE.Group();
+    const mat = flesh(0x1a2028, { flat: true, roughness: 0.95 });
+
+    const bodyGeo = new THREE.SphereGeometry(this.G * 0.3, 8, 6);
+    bodyGeo.scale(1.2, 0.9, 1.0);
+    fish.add(new THREE.Mesh(bodyGeo, mat));
+
+    // Illicium — the rod — arcing forward over the mouth
+    const rod = new THREE.Mesh(
+      new THREE.CylinderGeometry(this.G * 0.012, this.G * 0.02, this.G * 0.7, 4),
+      mat
+    );
+    rod.position.set(this.G * 0.2, this.G * 0.28, 0);
+    rod.rotation.z = -0.6;
+    fish.add(rod);
+
+    // Esca — the lure. Bright, and it pulses.
+    const esca = new THREE.Mesh(
+      new THREE.SphereGeometry(this.G * 0.075, 8, 6),
+      emissive(0x8fffd0, 2.8)
+    );
+    esca.position.set(this.G * 0.5, this.G * 0.5, 0);
+    fish.add(esca);
+
+    // The esca's glow on the surrounding water — a cheap point light so the
+    // lure actually lights something, which is what a lure is for.
+    const light = new THREE.PointLight(0x8fffd0, 1.2, this.G * 8, 2);
+    light.position.copy(esca.position);
+    fish.add(light);
+
+    const f = 0.55 + this.rng() * 0.35;
+    const th = this.rng() * Math.PI * 2;
+    const r = this.rAt(f) + this.G * (2 + this.rng() * 1.5);
+    fish.position.set(Math.cos(th) * r, this.yAt(f), Math.sin(th) * r);
+    fish.rotation.y = -th;
+    this.group.add(fish);
+    this.anglerfish = fish;
+
+    this.animated.push((t) => {
+      const pulse = Math.sin(t * 1.1) * 0.5 + 0.5;
+      esca.scale.setScalar(0.75 + pulse * 0.55);
+      esca.material.emissiveIntensity = 1.6 + pulse * 2.2;
+      light.intensity = 0.6 + pulse * 1.8;
+      fish.position.y = this.yAt(f) + Math.sin(t * 0.3) * this.G * 0.35;
+      fish.rotation.y = -th + Math.sin(t * 0.2) * 0.3;
+    });
+  }
+
+  // -------------------------------------------------------------------------
+
+  update(delta) {
+    this.time += delta;
+    if (this.isMobile && this.animated.length > 6) {
+      // On mobile, animate a subset — these are decorative at that distance.
+      const step = Math.ceil(this.animated.length / 6);
+      for (let i = 0; i < this.animated.length; i += step) {
+        this.animated[i](this.time);
+      }
+      return;
+    }
+    for (let i = 0; i < this.animated.length; i++) {
+      this.animated[i](this.time);
+    }
+  }
+
+  dispose() {
+    this.group.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) {
+        if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
+        else o.material.dispose();
+      }
+    });
+  }
+}
+
+export default LegacyColony;

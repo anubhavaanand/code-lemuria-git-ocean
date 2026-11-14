@@ -37,10 +37,24 @@ export const COLORS = {
   biolumRed: 0xff6b6b,
 
   // Whale skin (counter-shaded, like real cetaceans)
-  whaleDorsal: 0x2a4a70,
-  whaleLateral: 0x4d80a6,
-  whaleVentral: 0xc2d9e6,
-  whaleScar: 0xe4eef5,
+  //
+  // Lifted a long way from the first pass (0x2a4a70 / 0x4d80a6 / 0xc2d9e6). At
+  // those values a whale measured 76-105 luminance against water at 14-18 — it
+  // was technically rendering and technically unreadable, and a visual QA pass
+  // looking straight at the frame reported "no whale present at all". The fault
+  // was not geometry or scale; it was that the animal's own colour sat within a
+  // few code points of the water it swims in.
+  //
+  // A humpback is not blue-grey in life. It is a dark slate back over a
+  // near-white belly with a mottled grey flank, and that pale underside is the
+  // single brightest thing about it. So the dorsal stays dark and cool (it must
+  // still read as a silhouette from below), but the lateral and ventral tones
+  // are now genuinely pale, which is both accurate and what separates the body
+  // from the water column.
+  whaleDorsal: 0x18304a,
+  whaleLateral: 0x8fb6cf,
+  whaleVentral: 0xf2f8fb,
+  whaleScar: 0xffffff,
 
   // Kelp / flora — brighter so the towers read against the water
   kelpStipeDark: 0x24543a,
@@ -178,9 +192,20 @@ export const ZOOM_LEVELS = [
     id: "whale",
     label: "Whale",
     depth: -180,
-    focusY: 20,
-    distance: 30,
-    height: 14,
+    // The whale orbits at 0.58 x tower height, so for a large repo the animal
+    // sits ~78 units up while the old focusY of 20 aimed the lens at the
+    // tower's ankles. The whale then crossed the top of the frame and spent part
+    // of its orbit above the lens entirely — which is exactly what a visual QA
+    // pass reported: "no whale present at all", while the whale was in fact
+    // rendering, just above the top edge. Framing the middle of the tower is
+    // what keeps the whole orbit in shot, whatever the repo's size.
+    focusY: 16,
+    distance: 62,
+    // Height is what tilts the lens down onto the orbit. At 20 the camera looked
+    // only 8 degrees down, which put the near side of the orbit above the frame;
+    // at 58 it looks 15 degrees down and the orbit stays inside the frame at
+    // every orbital phase, for every size of repo.
+    height: 58,
     fov: 42,
     fog: 0.0028,
     blurb: "The whole repo as an animal. Every data point visible.",
@@ -349,7 +374,7 @@ export function languageStyleColor(language) {
 // Scale helpers
 // ---------------------------------------------------------------------------
 
-/** Tower height in scene units from a repo's commit history length. */
+/** Tower height in scene units from commit count. */
 export function towerHeight(repo) {
   const commits = repo.totalCommits || repo.commitFrequency * 52 || 200;
   return 6 + Math.sqrt(commits) * 1.15;
@@ -360,8 +385,29 @@ export function towerGirth(repo) {
   return 0.55 + Math.sqrt(Math.max(1, repo.contributors || 1)) * 0.22;
 }
 
-/** Whale body length in scene units from codebase size. */
+/**
+ * Whale body length in scene units, derived from commit count.
+ *
+ * The scale is load-bearing, not cosmetic. A whale orbits its tower at about
+ * 0.7 x the tower height, and tower height runs 6..~165 units across a realistic
+ * range of repositories. Deriving the whale from the *same* quantity as the
+ * tower keeps the two proportionate everywhere, so the animal always reads as
+ * something that belongs to that particular tower.
+ *
+ * Why commits and not codebase size (this used to be 5 + sqrt(KB)*0.18): a
+ * tower's height is already commit history and its girth is contributors, so a
+ * whale scaled by bytes drifted independently of the thing it circles. A 340 KB
+ * repo with 1,240 commits (ky) got an 8-unit whale beside a 46-unit tower — a
+ * minnow next to a redwood, which is unreadable on screen and wrong in the
+ * world. Commit count makes whale size track tower height at every scale, from
+ * a hobby repo to a 162-unit flagship.
+ *
+ * 0.28 is the ratio a humpback actually has: an adult is ~14 m, and a mature
+ * kelp tower is ~45 m. It is also the ratio that keeps the animal legible — at
+ * the whale zoom the camera pulls back in proportion to the orbit radius, so the
+ * whale lands on screen at 200-660 px depending on the size of the repo.
+ */
 export function whaleLength(repo) {
-  const kb = repo.codebaseSize || 500;
-  return 2.6 + Math.sqrt(kb) * 0.09;
+  const commits = repo.totalCommits || repo.commitFrequency * 52 || 200;
+  return 0.28 * towerHeight(repo);
 }

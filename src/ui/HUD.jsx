@@ -354,6 +354,43 @@ function Legend({ open, onClose }) {
 /* Root HUD                                                            */
 /* ------------------------------------------------------------------ */
 
+/**
+ * CC BY attribution.
+ *
+ * The imported whale sculpts are licensed CC BY 4.0, which requires credit to be
+ * visible while the work is displayed — not buried in a README. The world
+ * collects the credits as each sculpt finishes loading, so this renders exactly
+ * the assets actually on screen and nothing else.
+ */
+function CreditLine({ world }) {
+  const [credits, setCredits] = useState([]);
+
+  useEffect(() => {
+    if (!world) return;
+    const sync = () => setCredits([...(world.pendingCredits || [])]);
+    sync();
+    const id = setInterval(sync, 1500);
+    return () => clearInterval(id);
+  }, [world]);
+
+  const unique = useMemo(
+    () => Array.from(new Set(credits.filter(Boolean))),
+    [credits]
+  );
+  if (unique.length === 0) return null;
+
+  return (
+    <div className="go-credits">
+      <span className="go-credits-label">Sculpt</span>
+      {unique.map((c) => (
+        <span className="go-credits-item" key={c}>
+          {c}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export default function HUD({
   world,
   levels,
@@ -477,6 +514,8 @@ export default function HUD({
       />
 
       <Legend open={legendOpen} onClose={() => setLegendOpen(false)} />
+
+      <CreditLine world={world} />
 
       {!selectedRepo && (
         <div className="go-hintbar">

@@ -1073,3 +1073,44 @@ kbd {
     transition-duration: 0.001ms !important;
   }
 }
+/* ------------------------------------------------------------------ */
+/* CC BY attribution for imported sculpts                                */
+/* ------------------------------------------------------------------ */
+
+.go-credits {
+  position: fixed;
+  left: 50%;
+  bottom: 6px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(2, 12, 22, 0.55);
+  border: 1px solid var(--go-edge);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: rgba(190, 220, 235, 0.72);
+  pointer-events: none;
+  backdrop-filter: blur(6px);
+  z-index: 5;
+}
+
+.go-credits-label {
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 9px;
+  color: var(--go-cyan);
+  opacity: 0.8;
+}
+
+.go-credits-item {
+  white-space: nowrap;
+}
+
+@media (max-width: 520px) {
+  .go-credits {
+    display: none;
+  }
+}

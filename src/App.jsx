@@ -16,6 +16,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import * as THREE from "three";
 import { OceanWorld } from "./world/OceanWorld";
 import { ZOOM_LEVELS } from "./world/constants";
 import HUD from "./ui/HUD";
@@ -48,6 +49,20 @@ export default function App() {
         onSelect: (repo) => setSelectedRepo(repo),
         onLevelChange: (level) => setLevelId(level.id),
         onReady: () => setLoading(false),
+        // `?nosculpt=1` leaves the procedural body in place so a screenshot can
+        // be diffed against the sculpted one. Without it there is no way to tell
+        // "not drawn" from "drawn but unreadable".
+        suppressSculpt: !!new URLSearchParams(window.location.search).get(
+          "nosculpt"
+        ),
+        // `?only=whale` hides the water, the seafloor and every non-whale
+        // object. See the `onlyWhales` note in OceanWorld: a screenshot diff
+        // cannot isolate the animal, because removing it also changes what is
+        // visible behind it — measured that way the "body" came out 604 x 268
+        // px against a predicted 267 x 101.
+        onlyWhales: !!new URLSearchParams(window.location.search).get(
+          "only"
+        ),
       });
     } catch (e) {
       console.error("[GitOcean] failed to start world", e);
@@ -66,18 +81,265 @@ export default function App() {
         : null;
     const start = ZOOM_LEVELS.findIndex((l) => l.id === q);
     if (start >= 0) {
+      // Set BOTH. `t` is the eased position the rig actually reads; `targetT`
+      // is what it eases toward every frame. Setting only `t` used to mean the
+      // rig glided back to the default level within a second, so a headless
+      // screenshot taken at 9s captured an intermediate zoom — the reported
+      // level said "city" while the camera was still parked at the world view.
       instance.rig.t = start;
+      instance.rig.targetT = start;
       instance.rig.apply(0, true, null);
+    }
+
+    // ?focus=<owner/name|repo-name> points the camera at one repository.
+    //
+    // Without this, the "whale" zoom frames the origin — which is only correct
+    // if the followed repo happens to sit there. It does not: your own repos are
+    // spread across the district, so a whale-level screenshot of the origin was
+    // mostly empty water with the animals 200+ units off to the side. Naming a
+    // repo makes the level mean what its label says.
+    const focusQuery = new URLSearchParams(window.location.search).get("focus");
+    if (focusQuery) {
+      const needle = focusQuery.toLowerCase();
+      let found = null;
+      for (const e of instance.entries.values()) {
+        const full = `${e.repo.owner}/${e.repo.name}`.toLowerCase();
+        if (full === needle || e.repo.name.toLowerCase() === needle) {
+          found = e;
+          break;
+        }
+      }
+      if (found) {
+        instance.select(found.repo.id);
+        instance.focusSelected(start >= 0 ? start : 3);
+      } else {
+        console.warn(`[git-ocean] ?focus=${focusQuery} matched no repository`);
+      }
     }
 
     // Debug/QA handle: lets a headless browser drive zoom levels and read the
     // camera state so visual regressions can be caught without a human.
     if (typeof window !== "undefined") {
+      // `?freeze=1` pins every whale's orbital phase and the elapsed time.
+      //
+      // Without it a screenshot and a geometry census are two different frames:
+      // the orbit advances with wall-clock delta, so the pixel coordinates a QA
+      // pass is asked to inspect never match the reported position, and the only
+      // honest conclusion from empty water is "the whale is missing". Freezing
+      // makes the two measurements agree, which is what turns that verdict back
+      // into a measurement.
+      const freeze = new URLSearchParams(window.location.search).get("freeze");
+      if (freeze) {
+        instance.orbitScale = 0;
+        instance.timeScale = 0;
+      }
+
       window.__GO = {
+        THREE,
         world: instance,
         rig: instance.rig,
         goTo: (i) => instance.rig.goTo(i),
         select: (id) => instance.select(id),
+        // Whale census: which body a repo got, and whether the imported sculpt
+        // actually landed. `sculptSize` is measured after normalization, so a
+        // non-null size is proof the swap completed rather than a claim about it.
+        whale: (repoId) => {
+          const target = repoId
+            ? instance.entries.get(repoId)
+            : instance.entries.values().next().value;
+          if (!target || !target.whale) return null;
+          const w = target.whale;
+          return {
+            repo: target.repo.name,
+            species: (target.repo.whaleSpecies && target.repo.whaleSpecies.id) || null,
+            kind: w.sculptKind || "procedural",
+            credit: w.sculptCredit || null,
+            sculptSize: w.sculptSize
+              ? [
+                  Number(w.sculptSize.x.toFixed(2)),
+                  Number(w.sculptSize.y.toFixed(2)),
+                  Number(w.sculptSize.z.toFixed(2)),
+                ]
+              : null,
+            bodyLength: Number(w.length.toFixed(2)),
+            girth: Number(w.girth.toFixed(2)),
+            nodes: (() => {
+              let n = 0;
+              w.group.traverse(() => n++);
+              return n;
+            })(),
+            // Live placement, so a "whale is missing" report can be checked
+            // against geometry instead of guessed from pixels.
+            position: [
+              Number(w.group.position.x.toFixed(1)),
+              Number(w.group.position.y.toFixed(1)),
+              Number(w.group.position.z.toFixed(1)),
+            ],
+            visible: w.group.visible,
+            // Where the body centre actually lands on screen right now.
+            screen: (() => {
+              const v = w.group.position.clone();
+              v.y += w.bodyY || 0;
+              v.project(instance.camera);
+              return [
+                Math.round((v.x * 0.5 + 0.5) * window.innerWidth),
+                Math.round((-v.y * 0.5 + 0.5) * window.innerHeight),
+                Number(v.z.toFixed(3)),
+              ];
+            })(),
+            // What the census itself cannot be trusted on.
+            //
+            // `screen` projects the group origin, which equals the body centre
+            // only if the sculpt's pivot is centred — and it is not, because the
+            // armature's bind pose is offset from the drawn body. `rect` calls
+            // Box3.setFromObject on a SkinnedMesh, which reports the bind pose,
+            // so it once returned w=15132 with behind:true while the animal was
+            // plainly elsewhere in frame.
+            //
+            // These make the discrepancy visible instead of misleading: if
+            // groupWorld and bodyCentre disagree, the pivot is off, and any
+            // projection taken from the origin is wrong by exactly that much.
+            // The sculpt's world-space bounds taken from the DRAWN vertices,
+            // not from Box3 (which reads the bind pose). This is the number
+            // that decides apparent size, and it is what every hand projection
+            // has been missing: `sculptSize` is computed from raw geometry
+            // accessors and can disagree with what the GPU actually draws.
+            drawnBounds: (() => {
+              if (!w.sculpt) return null;
+              const b = new (w.group.position.constructor)();
+              let lo = [Infinity, Infinity, Infinity];
+              let hi = [0, 0, 0].map(() => -Infinity);
+              const v = new (w.group.position.constructor)();
+              w.sculpt.updateWorldMatrix(true, true);
+              w.sculpt.traverse((o) => {
+                if (!o.isSkinnedMesh || !o.geometry) return;
+                const p = o.geometry.getAttribute("position");
+                if (!p) return;
+                const stride = Math.max(1, Math.floor(p.count / 400));
+                for (let i = 0; i < p.count; i += stride) {
+                  v.set(p.getX(i), p.getY(i), p.getZ(i));
+                  // Skin it the way the GPU does, so the bounds are the drawn
+                  // bounds rather than the bind pose.
+                  const si = o.geometry.getAttribute("skinIndex");
+                  const sw = o.geometry.getAttribute("skinWeight");
+                  if (si && sw && o.skeleton) {
+                    const acc = new (w.group.position.constructor)();
+                    for (let c = 0; c < 4; c++) {
+                      const j = si.getComponent(i, c);
+                      const wt = sw.getComponent(i, c);
+                      if (!wt || j === undefined) continue;
+                      const bone = o.skeleton.bones[j];
+                      if (!bone) continue;
+                      const m = new (w.group.position.constructor)().multiplyMatrices(
+                        bone.matrixWorld,
+                        o.skeleton.boneInverses[j]
+                      );
+                      acc.addScaledVector(v.clone().applyMatrix4(m), wt);
+                    }
+                    if (acc.lengthSq() > 0) v.copy(acc);
+                  }
+                  v.applyMatrix4(o.matrixWorld);
+                  const e = [v.x, v.y, v.z];
+                  for (let a = 0; a < 3; a++) {
+                    if (e[a] < lo[a]) lo[a] = e[a];
+                    if (e[a] > hi[a]) hi[a] = e[a];
+                  }
+                }
+              });
+              if (!lo[0].isFinite || lo[0] === Infinity) return null;
+              return {
+                min: lo.map((n) => Number(n.toFixed(2))),
+                max: lo.map((n, i) => Number(hi[i].toFixed(2))),
+                size: lo.map((n, i) => Number((hi[i] - n).toFixed(2))),
+              };
+            })(),
+            bodyOffset: (() => {
+              const inner = w.sculpt && w.sculpt.children && w.sculpt.children[0];
+              if (!inner) return null;
+              const p = inner.position;
+              return [
+                Number(p.x.toFixed(2)),
+                Number(p.y.toFixed(2)),
+                Number(p.z.toFixed(2)),
+              ];
+            })(),
+            // The camera's own orientation, so a projection can be checked
+            // instead of trusted.
+            cameraBasis: (() => {
+              const c = instance.camera;
+              const q = c.quaternion;
+              const fwd = { x: 0, y: 0, z: -1 };
+              // rotate (0,0,-1) by q
+              const { x, y, z, w } = q;
+              const ix = w * fwd.x + y * fwd.z - z * fwd.y;
+              const iy = w * fwd.y + z * fwd.x - x * fwd.z;
+              const iz = w * fwd.z + x * fwd.y - y * fwd.x;
+              const iw = -x * fwd.x - y * fwd.y - z * fwd.z;
+              const rx = ix * w + iw * -x + iy * -z - iz * -y;
+              const ry = iy * w + iw * -y + iz * -x - ix * -z;
+              const rz = iz * w + iw * -z + ix * -y - iy * -x;
+              return {
+                pos: [Number(c.position.x.toFixed(1)), Number(c.position.y.toFixed(1)), Number(c.position.z.toFixed(1))],
+                fwd: [Number(rx.toFixed(3)), Number(ry.toFixed(3)), Number(rz.toFixed(3))],
+                fov: c.fov,
+              };
+            })(),
+            // Distance from the lens, which is what decides apparent size.
+            distance: Number(
+              instance.camera.position.distanceTo(w.group.position).toFixed(1)
+            ),
+            childMeshes: (() => {
+              const out = [];
+              w.group.traverse((o) => {
+                if (!o.isMesh && !o.isSkinnedMesh) return;
+                const m = Array.isArray(o.material) ? o.material[0] : o.material;
+                out.push({
+                  name: o.name || o.type,
+                  visible: o.visible,
+                  type: m ? m.type : null,
+                  hasMap: !!(m && m.map),
+                  opacity: m ? m.opacity : null,
+                  transparent: m ? !!m.transparent : null,
+                });
+              });
+              return out;
+            })(),
+          };
+        },
+        // Legacy fauna census, straight from the live scene graph. Lets a
+        // numeric check confirm which creatures actually built for a repo,
+        // instead of inferring it from a screenshot.
+        legacy: (repoId) => {
+          const target = repoId
+            ? instance.entries.get(repoId)
+            : instance.entries.values().next().value;
+          if (!target || !target.legacy) return null;
+          const l = target.legacy;
+          return {
+            repo: target.repo.name,
+            brainCoral: !!l.brainCoral,
+            anemone: !!l.anemone,
+            isopod: !!l.isopod,
+            urchins: l.urchins || 0,
+            featherStar: !!l.featherStar,
+            barnacles: !!l.barnacleRing,
+            sponge: !!l.sponge,
+            parrotfish: !!l.parrotfish,
+            seahorse: !!l.seahorse,
+            grouper: !!l.grouper,
+            cleanerWrasse: !!l.cleanerWrasse,
+            lanternfish: !!l.lanternfish,
+            nudibranch: !!l.nudibranch,
+            baskingShark: !!l.baskingShark,
+            anglerfish: !!l.anglerfish,
+            animated: l.animated.length,
+            objects: (() => {
+              let n = 0;
+              l.group.traverse(() => n++);
+              return n;
+            })(),
+          };
+        },
         camera: () => ({
           x: instance.camera.position.x,
           y: instance.camera.position.y,
@@ -116,33 +378,344 @@ export default function App() {
     // is computed from the real instance matrices and the real camera, so it
     // cannot be fooled by a dark screenshot or a flattering angle.
     let debugTimer = null;
-    const wantsRockReport =
-      typeof window !== "undefined" &&
-      new URLSearchParams(window.location.search).get("debug") === "rocks";
-    if (wantsRockReport) {
+    const debugMode = new URLSearchParams(window.location.search).get("debug");
+    const wantsRockReport = debugMode === "rocks";
+    const wantsFaunaReport = debugMode === "fauna";
+    const wantsWhaleReport = debugMode === "whale";
+    if (wantsRockReport || wantsFaunaReport || wantsWhaleReport) {
       const emit = () => {
         const el = containerRef.current;
         if (!el) return;
-        const rep = instance.floor.rockReport(
-          instance.camera,
-          el.clientWidth,
-          el.clientHeight
-        );
-        let node = document.getElementById("go-rock-report");
+        let node = document.getElementById("go-debug-report");
         if (!node) {
           node = document.createElement("pre");
-          node.id = "go-rock-report";
+          node.id = "go-debug-report";
           document.body.appendChild(node);
         }
-        node.textContent = JSON.stringify({
+        const payload = {
           level: instance.rig.levelId,
           camera: [
             Number(instance.camera.position.x.toFixed(0)),
             Number(instance.camera.position.y.toFixed(0)),
             Number(instance.camera.position.z.toFixed(0)),
           ],
-          rocks: rep,
-        });
+          // The camera's basis, read from its quaternion rather than assumed.
+          //
+          // Every projection I did by hand disagreed with the census, because I
+          // modelled the camera from the level's authored height/focus instead
+          // of reading where it actually ended up. This closes that gap: `fwd`
+          // and `focus` between them fix the camera completely, so a reported
+          // screen position can be recomputed and checked instead of trusted.
+          basis: (() => {
+            const c = instance.camera;
+            const e = c.matrixWorld.elements;
+            // matrixWorld's third column is the camera's local +Z in world
+            // space; the view direction is -Z.
+            return {
+              fwd: [
+                Number((-e[8]).toFixed(3)),
+                Number((-e[9]).toFixed(3)),
+                Number((-e[10]).toFixed(3)),
+              ],
+              up: [
+                Number(e[4].toFixed(3)),
+                Number(e[5].toFixed(3)),
+                Number(e[6].toFixed(3)),
+              ],
+              right: [
+                Number(e[0].toFixed(3)),
+                Number(e[1].toFixed(3)),
+                Number(e[2].toFixed(3)),
+              ],
+              focus: [
+                Number(instance.rig.focus.x.toFixed(1)),
+                Number(instance.rig.focus.y.toFixed(1)),
+                Number(instance.rig.focus.z.toFixed(1)),
+              ],
+              fov: c.fov,
+              yaw: Number(instance.rig.yaw.toFixed(4)),
+              pitch: Number(instance.rig.pitch.toFixed(4)),
+            };
+          })(),
+        };
+        if (wantsWhaleReport) {
+          payload.whales = [...instance.entries.values()]
+            .filter((e) => e.whale)
+            .map((e) => {
+              const w = e.whale;
+              return {
+                repo: e.repo.name,
+                species:
+                  (e.repo.whaleSpecies && e.repo.whaleSpecies.id) || null,
+                kind: w.sculptKind || "procedural",
+                credit: w.sculptCredit || null,
+                sculptSize: w.sculptSize
+                  ? [
+                      Number(w.sculptSize.x.toFixed(2)),
+                      Number(w.sculptSize.y.toFixed(2)),
+                      Number(w.sculptSize.z.toFixed(2)),
+                    ]
+                  : null,
+                bodyLength: Number(w.length.toFixed(2)),
+                girth: Number(w.girth.toFixed(2)),
+                nodes: (() => {
+                  let n = 0;
+                  w.group.traverse(() => n++);
+                  return n;
+                })(),
+                // Live placement, so a "whale is missing" report can be checked
+                // against geometry instead of guessed from pixels.
+                position: [
+                  Number(w.group.position.x.toFixed(1)),
+                  Number(w.group.position.y.toFixed(1)),
+                  Number(w.group.position.z.toFixed(1)),
+                ],
+                visible: w.group.visible,
+                // Baked world scale of the body. If this is far from 1 the
+                // animal is being drawn at the wrong size and a "no whale"
+                // report is a scale bug, not a position bug.
+                worldScale: (() => {
+                  const sc = new (w.group.position.constructor)();
+                  w.group.getWorldScale(sc);
+                  return [
+                    Number(sc.x.toFixed(3)),
+                    Number(sc.y.toFixed(3)),
+                    Number(sc.z.toFixed(3)),
+                  ];
+                })(),
+                worldQuat: (() => {
+                  const q = w.group.quaternion.clone();
+                  w.group.getWorldQuaternion(q);
+                  return [
+                    Number(q.x.toFixed(3)),
+                    Number(q.y.toFixed(3)),
+                    Number(q.z.toFixed(3)),
+                    Number(q.w.toFixed(3)),
+                  ];
+                })(),
+                // Whether the load-time re-centring actually ran, and what it
+                // measured. Three different correction formulas produced byte-
+                // identical rendered offsets, which is only possible if the
+                // block never executed — so the census now reports it rather
+                // than leaving it to be inferred from pixels.
+                recentre: (() => {
+                  const r = w.sculpt && w.sculpt.userData
+                    ? w.sculpt.userData.recentre
+                    : null;
+                  return r
+                    ? {
+                        sampled: r.sampled,
+                        lo: r.lo.map((v) => Number(v.toFixed(2))),
+                        hi: r.hi.map((v) => Number(v.toFixed(2))),
+                        localCentre: r.localCentre.map((v) =>
+                          Number(v.toFixed(2))
+                        ),
+                      }
+                    : null;
+                })(),
+                sculptChildWorld: (() => {
+                  if (!w.sculpt) return null;
+                  const sc = new (w.group.position.constructor)();
+                  const pos = new (w.group.position.constructor)();
+                  w.sculpt.getWorldScale(sc);
+                  w.sculpt.getWorldPosition(pos);
+                  // The node INSIDE the wrapper too. `sculpt` is the wrapper;
+                  // the uniform normalization scale lives on its child. Reporting
+                  // only the wrapper is what hid a 10.5x under-scaling for
+                  // several passes: the wrapper read (1, 0.38, 1) and looked
+                  // plausible, while the actual mesh child was never scaled up
+                  // from its 4.6-unit native length.
+                  const innerNode = w.sculpt.children && w.sculpt.children[0];
+                  if (innerNode) {
+                    innerNode.getWorldScale(sc);
+                    innerNode.getWorldPosition(pos);
+                  }
+                  // The mesh's OWN scale, and its geometry's own bounds. A
+                  // SkinnedMesh's vertices are displaced on the GPU by the
+                  // bone matrices, so `getWorldScale` on the wrapper can look
+                  // right while the animal on screen is a fraction of the size:
+                  // on this asset the wrapper reported 1.0 where the length
+                  // implied 10.5, and the drawn body came out 28 px long instead
+                  // of 292. Reading the geometry and the mesh separately is what
+                  // separates "scaled wrongly" from "skinned away".
+                  // The skinned extent: the range the vertices actually occupy
+                  // AFTER the bone matrices, sampled on the GPU's own terms.
+                  // three.js computes this into `boundingBox` when asked and
+                  // honours `computeBoundingBox()` on a SkinnedMesh, which
+                  // applies the bone transforms — unlike a plain Box3 over the
+                  // geometry, which stays in bind pose.
+                  let skinnedBox = null;
+                  w.sculpt.traverse((o) => {
+                    if (!o.isSkinnedMesh || skinnedBox) return;
+                    o.computeBoundingBox();
+                    const bb = o.boundingBox;
+                    if (!bb) return;
+                    skinnedBox = {
+                      min: [Number(bb.min.x.toFixed(2)), Number(bb.min.y.toFixed(2)), Number(bb.min.z.toFixed(2))],
+                      max: [Number(bb.max.x.toFixed(2)), Number(bb.max.y.toFixed(2)), Number(bb.max.z.toFixed(2))],
+                    };
+                  });
+                  let meshInfo = null;
+                  w.sculpt.traverse((o) => {
+                    if (!o.isMesh || meshInfo) return;
+                    const g = o.geometry;
+                    if (!g) return;
+                    if (!g.boundingBox) g.computeBoundingBox();
+                    const bb = g.boundingBox;
+                    meshInfo = {
+                      name: o.name,
+                      scale: [
+                        Number(o.scale.x.toFixed(3)),
+                        Number(o.scale.y.toFixed(3)),
+                        Number(o.scale.z.toFixed(3)),
+                      ],
+                      geomMin: bb
+                        ? [Number(bb.min.x.toFixed(2)), Number(bb.min.y.toFixed(2)), Number(bb.min.z.toFixed(2))]
+                        : null,
+                      geomMax: bb
+                        ? [Number(bb.max.x.toFixed(2)), Number(bb.max.y.toFixed(2)), Number(bb.max.z.toFixed(2))]
+                        : null,
+                    };
+                  });
+                  return {
+                    scale: [Number(sc.x.toFixed(3)), Number(sc.y.toFixed(3)), Number(sc.z.toFixed(3))],
+                    position: [
+                      Number(pos.x.toFixed(1)),
+                      Number(pos.y.toFixed(1)),
+                      Number(pos.z.toFixed(1)),
+                    ],
+                    mesh: meshInfo,
+                    skinnedBox,
+                  };
+                })(),
+                drawCalls: (() => {
+                  // Renderer info is only meaningful right after a frame, so
+                  // this is read from the last render rather than recomputed.
+                  const info = instance.renderer && instance.renderer.info;
+                  return info ? info.render.calls : null;
+                })(),
+                orbit: (() => {
+                  const o = e.whaleOrbit;
+                  if (!o) return null;
+                  return {
+                    cx: Number(o.cx.toFixed(1)),
+                    cy: Number(o.y.toFixed(1)),
+                    cz: Number(o.cz.toFixed(1)),
+                    r: Number(o.r.toFixed(1)),
+                    phase: Number(o.phase.toFixed(2)),
+                  };
+                })(),
+                yaw: Number(instance.rig.yaw.toFixed(2)),
+                // Where the body centre lands on screen right now.
+                screen: (() => {
+                  const v = w.group.position.clone();
+                  v.y += w.bodyY || 0;
+                  v.project(instance.camera);
+                  return [
+                    Math.round((v.x * 0.5 + 0.5) * window.innerWidth),
+                    Math.round((-v.y * 0.5 + 0.5) * window.innerHeight),
+                    Number(v.z.toFixed(3)),
+                  ];
+                })(),
+                // Authoritative on-screen rect of the sculpt, from its real
+                // world-space bounding box projected through the live camera.
+                // The `screen` field above projects the group ORIGIN, which
+                // assumes the body is centred on it; this measures what is
+                // actually drawn, so a mismatch between the two is visible
+                // instead of sending a QA pass to inspect empty water.
+                rect: (() => {
+                  const sculpt = w.sculpt || w.bodyMesh;
+                  if (!sculpt) return null;
+                  const b = new THREE.Box3().setFromObject(sculpt);
+                  if (!b || b.isEmpty()) return null;
+                  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, behind = false;
+                  for (let i = 0; i < 8; i++) {
+                    const v = new THREE.Vector3(
+                      i & 1 ? b.max.x : b.min.x,
+                      i & 2 ? b.max.y : b.min.y,
+                      i & 4 ? b.max.z : b.min.z
+                    );
+                    v.project(instance.camera);
+                    if (v.z > 1) behind = true;
+                    const sx = (v.x * 0.5 + 0.5) * window.innerWidth;
+                    const sy = (-v.y * 0.5 + 0.5) * window.innerHeight;
+                    if (sx < x0) x0 = sx;
+                    if (sx > x1) x1 = sx;
+                    if (sy < y0) y0 = sy;
+                    if (sy > y1) y1 = sy;
+                  }
+                  return {
+                    x0: Math.round(x0), y0: Math.round(y0),
+                    x1: Math.round(x1), y1: Math.round(y1),
+                    w: Math.round(x1 - x0), h: Math.round(y1 - y0),
+                    behind,
+                  };
+                })(),
+                // Distance from the lens, which is what decides apparent size.
+                distance: Number(
+                  instance.camera.position.distanceTo(w.group.position).toFixed(1)
+                ),
+                // A QA pass needs one stable frame: the screenshot and the
+                // census are separate page loads, and the orbit moves between
+                // them, so the reported position would not be the pixels.
+                childMeshes: (() => {
+                  const out = [];
+                  w.group.traverse((o) => {
+                    if (!o.isMesh && !o.isSkinnedMesh) return;
+                    const m = Array.isArray(o.material) ? o.material[0] : o.material;
+                    out.push({
+                      name: o.name || o.type,
+                      visible: o.visible,
+                      type: m ? m.type : null,
+                      hasMap: !!(m && m.map),
+                      opacity: m ? m.opacity : null,
+                      transparent: m ? !!m.transparent : null,
+                    });
+                  });
+                  return out;
+                })(),
+              };
+            });
+        } else if (wantsFaunaReport) {
+          // Census of every tower that actually built Legacy fauna.
+          payload.fauna = [...instance.entries.values()]
+            .filter((e) => e.legacy)
+            .map((e) => {
+              const l = e.legacy;
+              let nodes = 0;
+              l.group.traverse(() => nodes++);
+              return {
+                repo: e.repo.name,
+                creatures: [
+                  l.brainCoral && "brainCoral",
+                  l.anemone && "anemone",
+                  l.isopod && "isopod",
+                  (l.urchins || 0) > 0 && `urchins:${l.urchins}`,
+                  l.featherStar && "featherStar",
+                  l.barnacleRing && "barnacleRing",
+                  l.sponge && "sponge",
+                  l.parrotfish && "parrotfish",
+                  l.seahorse && "seahorse",
+                  l.grouper && "grouper",
+                  l.cleanerWrasse && "cleanerWrasse",
+                  (l.coralPolyp || []).length > 0 && `coralPolyp:${l.coralPolyp.length}`,
+                  (l.lanternfish || []).length > 0 && `lanternfish:${l.lanternfish.length}`,
+                  (l.nudibranch || []).length > 0 && `nudibranch:${l.nudibranch.length}`,
+                  l.baskingShark && "baskingShark",
+                  l.anglerfish && "anglerfish",
+                ].filter(Boolean),
+                animated: l.animated.length,
+                nodes,
+              };
+            });
+        } else {
+          payload.rocks = instance.floor.rockReport(
+            instance.camera,
+            el.clientWidth,
+            el.clientHeight
+          );
+        }
+        node.textContent = JSON.stringify(payload);
       };
       emit();
       debugTimer = setInterval(emit, 1000);

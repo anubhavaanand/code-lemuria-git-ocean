@@ -150,6 +150,11 @@ export class CameraRig {
   goTo(index) {
     this.targetT = clamp(index, 0, this.levels.length - 1);
     this.targetIndex = Math.round(this.targetT);
+    // Move the eased position too. Easing is for *interactive* zoom, where the
+    // glide is the point; when a caller explicitly asks for a level (a QA
+    // screenshot, a deep link, "fly to repo"), a slow glide just means the
+    // camera is somewhere else when the caller looks at it.
+    this.t = this.targetT;
   }
 
   /** Relative zoom, in zoom-level units. */
@@ -206,13 +211,32 @@ export class CameraRig {
     const depth = a.depth + (b.depth - a.depth) * ease;
     const fov = a.fov + (b.fov - a.fov) * ease;
     const distance = a.distance + (b.distance - a.distance) * ease;
-    const height = a.height + (b.height - a.height) * ease;
+    let height = a.height + (b.height - a.height) * ease;
+    // See the focus block above: a subject taller than the level was authored
+    // for also needs a steeper downward tilt, or its whale's orbit leaves the
+    // top of the frame.
+    if (follow && follow.height != null) {
+      height = Math.max(height, follow.height);
+    }
     const fog = a.fog + (b.fog - a.fog) * ease;
 
     // Focus height is authored per level, so the camera always frames the
     // band that belongs to that zoom. No guessing from depth — that coupling
     // is what made the old rig look at empty water.
-    const baseFocusY = a.focusY + (b.focusY - a.focusY) * ease;
+    let baseFocusY = a.focusY + (b.focusY - a.focusY) * ease;
+
+    // A followed repo may need its focus raised to suit its own size.
+    //
+    // The authored focus heights are tuned for an ordinary tower (~30 units).
+    // A flagship repo is 3-5x that, and its whale orbits at 0.58 x its own tower
+    // height — 78 units up for a 134-unit tower. A fixed focus of 16 therefore
+    // aims the lens at the tower's ankles and the whale spends part of its orbit
+    // above the top edge of the frame, which a visual QA pass reported as "no
+    // whale present at all". Scaling the focus with the subject keeps the animal
+    // centred whatever the repo's size.
+    if (follow && follow.focusY != null) {
+      baseFocusY = Math.max(baseFocusY, follow.focusY);
+    }
 
     if (follow && follow.position) {
       // When following a repo, track it in X/Z but keep the level's height so
@@ -235,11 +259,47 @@ export class CameraRig {
     const sinY = Math.sin(this.yaw);
     const cosY = Math.cos(this.yaw);
 
+    // Never park the camera inside a kelp tower or a whale's orbit.
+    //
+    // Each level's distance is authored to sit *outside* the tallest band of
+    // geometry at that level. `tower` at 92 units is already clear of the 30-40
+    // unit tower cluster; `whale` needs to stay far enough back that the whale
+    // it is supposedly showing is actually in front of the lens rather than
+    // behind it. This clamp is the guard rail for when a level is edited
+    // carelessly: it cannot fix a wrong focus, but it stops the "empty void"
+    // frame where the camera ends up past the subject.
+    // Distance is scaled to the subject, because the authored
+    // per-level distance assumes a tower of ordinary height. A flagship repo —
+    // tens of thousands of commits, a tower two or three times the norm — pushes
+    // its whale's orbit proportionally further out, and a fixed distance then
+    // leaves the animal behind the lens rather than in front of it.
+    //
+    // `baseRadius` is not the subject's tower height but the *distance from the
+    // subject to its whale*, which is what a subject of ordinary size uses: an
+    // ~18-unit tower (towerHeight for a repo of a few hundred commits) has an
+    // orbit radius of about 32 units. Forcing baseRadius to 32 is deliberate —
+    // it makes an ordinary repo's whale framing come out exactly as authored, so
+    // the scaling only ever helps the outliers instead of re-tuning every level.
+    const subjectRadius =
+      follow && follow.radius ? Math.max(1, follow.radius) : 32;
+    const baseRadius = 32;
+    const fit = THREE.MathUtils.clamp(subjectRadius / baseRadius, 0.6, 3.4);
+    const minDistance = this.minDistance || 0;
+    // A follow target may author its own distance outright. It knows the
+    // subject's real size and orbit; the level only knows an authored guess
+    // tuned for a tower of ordinary height. When both are present the authored
+    // one wins, because the level's guess is what put the animal off the bottom
+    // of the frame.
+    const authored = follow && follow.distance != null;
+    const dist = authored
+      ? Math.max(follow.distance, minDistance)
+      : Math.max(distance * fit, minDistance);
+
     // Orbit around the focus: yaw sweeps the camera on a circle, pitch lifts
     // and lowers it. Clamped so you can never end up under the sediment.
-    const px = this.focus.x + sinY * distance * cosY;
-    const pz = this.focus.z + cosY * distance * cosY;
-    const py = this.focus.y + height - Math.sin(this.pitch) * distance * 0.55;
+    const px = this.focus.x + sinY * dist * cosY;
+    const pz = this.focus.z + cosY * dist * cosY;
+    const py = this.focus.y + height - Math.sin(this.pitch) * dist * 0.55;
     const clampedY = Math.max(4, py);
 
     this.camera.position.set(px, clampedY, pz);

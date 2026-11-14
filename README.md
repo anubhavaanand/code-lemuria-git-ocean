@@ -12,7 +12,9 @@ GitHub data point rendered as something that could exist in the sea.
 [![Three.js](https://img.shields.io/badge/Three.js-WebGL-black?logo=three.js)](https://threejs.org/)
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)](https://reactjs.org/)
 
-[The Vision](#-the-vision) · [The Design Law](#-the-design-law) · [Creature Map](#-the-creature-map) · [World Structure](#-the-world-structure) · [Inspiration](#-inspiration)
+[The Vision](#-the-vision) · [The Design Law](#-the-design-law) · [Creature Map](#-the-creature-map) · [World Structure](#-the-world-structure) · [Inspiration](#-inspiration) · [Status](#-status)
+
+**Live:** [anubhavaanand.github.io/code-lemuria-git-ocean](https://anubhavaanand.github.io/code-lemuria-git-ocean/)
 
 </div>
 
@@ -202,9 +204,20 @@ What works today:
 - Procedural whales with five species, correct body plans, and identity features
   derived from data.
 - Keplerian orbital creature clouds for five trophic groups.
+- **Nineteen Legacy creatures** on every named tower — one per repository
+  attribute, each growing or swimming where that attribute says it should. Brain
+  coral from README quality, a basking-shark shadow from README length, tube
+  worms from CI status, an anglerfish whose lure lights the water from security
+  scanning, a seahorse only on pre-releases.
+- **An imported whale sculpt** for the humpback (CC BY 4.0), skinned with the
+  counter-shading shader so the dorsal colour is still the repository's language
+  and the scarring is still its age. The sculpt supplies the silhouette; the
+  procedural layer still supplies the meaning — flukes from forks, flippers from
+  open PRs, barnacles from open issues.
 - Silicon wafer obelisks marking capital clusters.
 - Five zoom levels with a continuous, smooth camera.
-- A React HUD: identity, depth, language tally, zoom rail, repository card.
+- A React HUD: identity, depth, language tally, zoom rail, repository card,
+  CC BY attribution for any sculpt on screen.
 
 What is deliberately not built yet:
 
@@ -227,8 +240,12 @@ npm run build    # production bundle
 Query parameters for the visual QA pass:
 
 - `?level=world|country|city|tower|whale` — start at a given zoom level
+- `?focus=<owner/name>` — frame one repository at that level
 - `?debug=rocks` — dump a live rock-framing report (frustum-projected instance
   sizes) into the DOM for headless inspection
+- `?debug=fauna` — dump the Legacy creature census per tower
+- `?debug=whale` — dump which body each whale got (procedural lathe vs imported
+  sculpt) and the measured sculpt size
 
 ---
 
