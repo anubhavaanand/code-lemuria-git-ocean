@@ -1114,9 +1114,15 @@ kbd {
   color: var(--go-ink-faint);
   letter-spacing: 0.01em;
   max-width: 340px;
-  line-height: 1.7;
+  line-height: 1.9;
   pointer-events: none;
   text-shadow: 0 1px 6px rgba(0, 4, 10, 0.9);
+}
+
+/* The readout sits directly above the hints on the left, so the hints need to
+   stay clear of it rather than being overlapped by it. */
+.go-hintbar {
+  bottom: 26px;
 }
 
 /* ==========================================================================

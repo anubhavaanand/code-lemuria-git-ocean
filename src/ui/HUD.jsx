@@ -697,12 +697,15 @@ export default function HUD({
 
       <CreditLine world={world} />
 
-      {!selectedRepo && (
-        <div className="go-hintbar">
-          Drag to look · Scroll to descend · Click a tower to read its data ·{" "}
-          <kbd>1</kbd>–<kbd>5</kbd> jump levels · <kbd>L</kbd> legend
-        </div>
-      )}
+      {/* Hints stay until the user has actually done the thing. Hiding them the
+          moment a tower is selected was backwards: selecting is how you learn
+          that Escape clears, and the control set is worth seeing while the
+          result is on screen. */}
+      <div className="go-hintbar">
+        <kbd>Drag</kbd> look · <kbd>Scroll</kbd> descend ·{" "}
+        <kbd>Click</kbd> a tower or an animal to read it · <kbd>Esc</kbd> clear ·{" "}
+        <kbd>1</kbd>–<kbd>5</kbd> jump · <kbd>L</kbd> legend
+      </div>
     </div>
   );
 }
