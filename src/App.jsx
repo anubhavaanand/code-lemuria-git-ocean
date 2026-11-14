@@ -493,6 +493,29 @@ export default function App() {
                     Number(q.w.toFixed(3)),
                   ];
                 })(),
+                // World-space AABB of the DEFORMED body, from the CPU-skinned
+                // point cloud. This is the only honest size measurement on this
+                // asset: Box3.setFromObject reads the bind pose, the geometry
+                // accessors read the undeformed mesh, and neither matches what
+                // the GPU draws once the skeleton has posed it.
+                drawnBounds: (() => {
+                  const sculpt = w.sculpt;
+                  if (!sculpt || !sculpt.userData.recentre) return null;
+                  const r = sculpt.userData.recentre;
+                  const b = new THREE.Box3(
+                    new THREE.Vector3().fromArray(r.lo),
+                    new THREE.Vector3().fromArray(r.hi)
+                  );
+                  const inner = sculpt.children && sculpt.children[0];
+                  b.applyMatrix4(inner ? inner.matrixWorld : sculpt.matrixWorld);
+                  const s = new (w.group.position.constructor)();
+                  b.getSize(s);
+                  return [
+                    Number(s.x.toFixed(2)),
+                    Number(s.y.toFixed(2)),
+                    Number(s.z.toFixed(2)),
+                  ];
+                })(),
                 // Whether the load-time re-centring actually ran, and what it
                 // measured. Three different correction formulas produced byte-
                 // identical rendered offsets, which is only possible if the
@@ -639,16 +662,46 @@ export default function App() {
                     Number(v.z.toFixed(3)),
                   ];
                 })(),
-                // Authoritative on-screen rect of the sculpt, from its real
-                // world-space bounding box projected through the live camera.
-                // The `screen` field above projects the group ORIGIN, which
-                // assumes the body is centred on it; this measures what is
-                // actually drawn, so a mismatch between the two is visible
-                // instead of sending a QA pass to inspect empty water.
+                // Authoritative on-screen rect of the sculpt.
+                //
+                // Measured from the CPU-skinned bounds recorded by
+                // normalizeWhale(), NOT from Box3.setFromObject(). On a skinned
+                // mesh Box3 reads the BIND pose: on this rig it reports a box
+                // 0.19 x 0.39 x 0.10 units against a drawn body 2.18 x 2.71 x
+                // 4.64, and a projected rect of w=15132 h=8908 behind:true while
+                // the animal was plainly in frame. Six QA passes were sent to
+                // inspect empty water because this field was believed.
+                //
+                // The CPU-skinned bounds are in the same local space as the
+                // sculpt's own transform, so they are transformed by the
+                // sculpt's matrixWorld and then projected — which is the chain
+                // that was missing when the pivot was being fixed.
                 rect: (() => {
                   const sculpt = w.sculpt || w.bodyMesh;
                   if (!sculpt) return null;
-                  const b = new THREE.Box3().setFromObject(sculpt);
+                  const r = sculpt.userData && sculpt.userData.recentre;
+                  let b;
+                  if (r && r.lo && r.hi) {
+                    // `lo`/`hi` are in inner's PARENT space, because that is the
+                    // space normalizeWhale() measured them in and the space the
+                    // pivot correction is applied in. So they need inner's full
+                    // transform (k, the yaw, and the recentring offset) — which
+                    // is inner.matrixWorld once the wrapper has been assembled.
+                    //
+                    // Using the wrapper's matrix alone applies ky but not k, so
+                    // the box stays in raw GLB units and reports a 7 x 10 px
+                    // animal for a body 48 units long. Using a Box3 over the
+                    // object instead reads the bind pose, which on this rig is
+                    // 0.19 x 0.39 x 0.10 units.
+                    const inner = sculpt.children && sculpt.children[0];
+                    b = new THREE.Box3(
+                      new THREE.Vector3().fromArray(r.lo),
+                      new THREE.Vector3().fromArray(r.hi)
+                    );
+                    b.applyMatrix4(inner ? inner.matrixWorld : sculpt.matrixWorld);
+                  } else {
+                    b = new THREE.Box3().setFromObject(sculpt);
+                  }
                   if (!b || b.isEmpty()) return null;
                   let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, behind = false;
                   for (let i = 0; i < 8; i++) {
