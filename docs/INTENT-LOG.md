@@ -100,6 +100,38 @@ Also landed in the same pass: distance culling for legacy fauna (both the CPU
 update and the draw), and a guard on the rocks census that was throwing under
 `?only=whale` and making the report node come back empty.
 
+- `cdf3c49`, `532b899`, `766a489` **perf: instance everything that repeats.**
+  Growth rings, then the legacy fauna in two batches. Calls 728 → 707 → 608 →
+  533, geometries 810 → 772 → 598 → 539. Triangles rose slightly (200,974 →
+  202,158) and that is expected: instancing draws every instance every frame,
+  where separate meshes let three frustum-cull the off-screen ones.
+- `ef3422e` **feat(interactivity): show which tower is selected, and what is
+  clickable.** `selectedId` was written and never read — nothing in the scene
+  drew a selection. New src/world/SelectionMarker.js: a hover ring and a select
+  ring plus a pulse climbing the stipe. Both take the tower's own language
+  colour. Picking was restructured rather than duplicated: `_pickAt()` returns
+  the tower and stashes the id, and hover is resolved once per frame in
+  `_loop()` because pointermove fires far more often than a frame.
+- `6fa86e9` **fix(fauna): make the two invisible creatures countable.**
+  buildCopepods and buildAmphipods drew and animated but assigned no `this.*`
+  field, so the census could not see them. Census 73 → 87 creatures.
+- `8ec204f` **feat(codex): explain any creature, in the world's own logic.**
+  New src/world/codex.js — one entry per creature with field, meaning and the
+  ecological argument. The design law is enforceable by a reader now, not just
+  asserted in the source.
+- `78d4547`, `a7b95c7`, `7866717` **feat(picking): a click on an animal names the
+  animal.** `LegacyColony` tags every creature root and resolves a hit back
+  through them. Found and fixed two real bugs on the way: the parrotfish scar
+  resolved to nothing, and the basking shark's shadow was swallowing 87 of 154
+  rays meant for the tower.
+- `6404d63`, `c8d6c63` **feat(hud): name what the pointer is over, and what this
+  colony built.** A hover tooltip and an explore readout.
+- `2a90e0d` **feat(keys): arrow keys step between zoom levels.** Number keys
+  jump absolutely, arrows move relative. Plus a guard so shortcuts never steal
+  keystrokes from a text field.
+- `baf620d` **fix(hud): the readout collapsed to nothing on phones.**
+  `calc(100vw - 460px)` goes negative below 460px.
+
 ### What the measurements say to do next
 
 1. **Draw calls.** 657 of the city zoom's 728 calls belong to the non-whale
