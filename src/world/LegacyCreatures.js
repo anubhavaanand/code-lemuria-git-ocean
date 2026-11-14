@@ -1289,6 +1289,14 @@ export class LegacyColony {
     shark.position.set(0, this.yAt(0.75), -this.G * 9);
     this.group.add(shark);
     this.baskingShark = shark;
+    // Deliberately NOT a picking target. The shark is a shadow: a dark, unlit,
+    // transparent shape whose entire job is to pass across the tower and be
+    // felt rather than handled. A shape that large and that close to the camera
+    // would swallow every click on the stipe behind it and make the world feel
+    // broken — the animal is read, the tower is clicked.
+    shark.traverse((o) => {
+      o.userData.noPick = true;
+    });
     this.tag("baskingShark", shark);
     this._record("baskingShark", "readmeLength", "README length", 1);
 

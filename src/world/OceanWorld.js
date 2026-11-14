@@ -638,11 +638,30 @@ export class OceanWorld {
     // Only the repos with real entries are pickable — ambient towers are
     // scenery, and raycasting thousands of them is a waste.
     const targets = this.pickables;
-    const hits = this.raycaster.intersectObjects(targets, true);
+    let hits = this.raycaster.intersectObjects(targets, true);
     if (!hits.length) {
       this._pickAt.lastId = null;
       return null;
     }
+
+    // A shadow is not an animal you can grab. The basking shark's whole purpose
+    // is to pass across the tower and be felt rather than handled, and at the
+    // size it is drawn it would swallow every click aimed at the stipe behind
+    // it. Anything tagged `noPick` is skipped, and the ray continues.
+    const pickable = hits.filter((h) => {
+      let o = h.object;
+      while (o && o !== this.scene) {
+        if (o.userData && o.userData.noPick) return false;
+        o = o.parent;
+      }
+      return true;
+    });
+    if (!pickable.length) {
+      this._pickAt.lastId = null;
+      this._pickAt.lastCreature = null;
+      return null;
+    }
+    hits = pickable;
 
     // The creature is resolved BEFORE the walk to the tower, because that walk
     // mutates `node` — by the time it reaches the tower group there is nothing
