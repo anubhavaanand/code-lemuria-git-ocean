@@ -36,6 +36,75 @@ function ringCount(ageDays) {
 const RING_SEGMENTS = 12;
 const RING_TUBE = 0.018;
 
+// The small props are authored deterministically, then posed with a tower's own
+// seeded RNG. Randomness at construction is why they could not be batched before:
+// an InstancedMesh holds one geometry, and two towers' rings differed by a
+// fraction of a unit — indistinguishable, but enough to make each its own draw.
+// Below this spread the shapes are identical, so they share one instance buffer
+// and one material and cost one draw call across every tower.
+const SMALL_FEATURE_EPSILON = 0.05;
+
+/**
+ * Whether a tower's small static props may be batched with every other tower's.
+ *
+ * The rings are a radius and a height up the stipe; the tendrils are lengths and
+ * angles around the holdfast; the tube worms are heights and lean. None of them
+ * is a silhouette — they are bands, hairs and lamps a few pixels wide at the city
+ * zoom where they are actually visible. A tower whose rings vary by less than a
+ * twentieth of a unit is not a different shape.
+ */
+export function smallFeatureKey(tower) {
+  const g = Math.round(tower.girth / SMALL_FEATURE_EPSILON);
+  const h = Math.round(tower.height / SMALL_FEATURE_EPSILON);
+  return `${g}:${h}:${tower.rings}:${tower.ciStatus || "none"}:${tower.tubeWormCount || 0}`;
+}
+
+/**
+ * The shared geometry for each batched prop.
+ *
+ * Authored once, unit-sized, and scaled per instance. `rotateX` is applied to
+ * the geometry rather than to each instance's matrix, so the instance matrix
+ * carries only a scale and the two are interchangeable.
+ */
+export const SHARED = {
+  ring: (() => {
+    const g = new THREE.TorusGeometry(1, RING_TUBE, 4, RING_SEGMENTS);
+    g.rotateX(Math.PI / 2);
+    return g;
+  })(),
+  tendril: new THREE.CylinderGeometry(0.02, 0.09, 1, 5),
+  worm: new THREE.CylinderGeometry(0.05, 0.09, 1, 5),
+};
+
+/**
+ * A deterministic per-tower RNG.
+ *
+ * The props are decorative and static, so the only thing that matters is that
+ * the same repository looks the same on every load — a tower that reshuffles its
+ * rings between visits reads as a different repo. Seeded from the repository, not
+ * from Math.random().
+ */
+function seeded(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a += 0x6d2b79f5;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function seedOf(repo) {
+  const s = `${repo.owner}/${repo.name}`;
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
 export class KelpTower {
   constructor(repo, opts = {}) {
     this.repo = repo;
@@ -51,7 +120,16 @@ export class KelpTower {
     this.group = new THREE.Group();
     this.group.name = `tower:${repo.owner}/${repo.name}`;
 
+    // A seeded RNG for the small props, so a repository's rings and tendrils are
+    // the same on every load. `time` stays random: it is a phase offset, and two
+    // towers that sway in lockstep look mechanical.
+    this.rng = seeded(seedOf(repo));
     this.time = Math.random() * 100;
+
+    // When batching, the holdfast tendrils and the growth rings are posed into
+    // matrices and handed to the KelpBatch instead of becoming meshes here. The
+    // batch owns one buffer and one draw call for every tower.
+    this.batchProps = opts.batchProps === true;
 
     this.build();
   }
@@ -83,35 +161,47 @@ export class KelpTower {
     this.holdfast.scale.set(this.girth * 1.5, this.girth * 0.55, this.girth * 1.5);
     this.group.add(this.holdfast);
 
-    // Root tendrils spreading across the sediment — more contributors, more spread
+    // Root tendrils spreading across the sediment — more contributors, more spread.
+    //
+    // Posed, not built, when batching: the matrices are recorded so the batch can
+    // read them, and the tower keeps no mesh of its own. The batch is one draw call
+    // for every tower instead of one per tower.
     const tendrilCount = THREE.MathUtils.clamp(
       Math.floor((this.repo.contributors || 1) * 1.4),
       2,
       this.isMobile ? 5 : 12
     );
+    this.tendrilCount = tendrilCount;
 
-    const tGeo = new THREE.CylinderGeometry(0.02, 0.09, 1, 5);
-    const tMat = new THREE.MeshStandardMaterial({
-      color: COLORS.holdfast,
-      roughness: 0.95,
-    });
-    const tendrils = new THREE.InstancedMesh(tGeo, tMat, tendrilCount);
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
     const s = new THREE.Vector3();
     const p = new THREE.Vector3();
+    const e = new THREE.Euler();
+    const matrices = [];
 
     for (let i = 0; i < tendrilCount; i++) {
-      const a = (i / tendrilCount) * Math.PI * 2 + Math.random() * 0.6;
-      const len = this.girth * (1.1 + Math.random() * 1.9);
+      const a = (i / tendrilCount) * Math.PI * 2 + this.rng() * 0.6;
+      const len = this.girth * (1.1 + this.rng() * 1.9);
       p.set(Math.cos(a) * len * 0.55, len * 0.1, Math.sin(a) * len * 0.55);
-      q.setFromEuler(new THREE.Euler(Math.PI / 2.4, a, 0));
+      e.set(Math.PI / 2.4, a, 0);
+      q.setFromEuler(e);
       s.set(1, len, 1);
       m.compose(p, q, s);
-      tendrils.setMatrixAt(i, m);
+      matrices.push(m.clone());
     }
-    tendrils.instanceMatrix.needsUpdate = true;
-    this.group.add(tendrils);
+
+    this.tendrilMatrices = matrices;
+    if (!this.batchProps) {
+      const tMat = new THREE.MeshStandardMaterial({
+        color: COLORS.holdfast,
+        roughness: 0.95,
+      });
+      const tendrils = new THREE.InstancedMesh(SHARED.tendril, tMat, tendrilCount);
+      for (let i = 0; i < tendrilCount; i++) tendrils.setMatrixAt(i, matrices[i]);
+      tendrils.instanceMatrix.needsUpdate = true;
+      this.group.add(tendrils);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -272,23 +362,16 @@ export class KelpTower {
   buildRingBands() {
     if (this.rings <= 0) return;
 
-    const mat = new THREE.MeshBasicMaterial({
-      color: COLORS.kelpBladeLit,
-      transparent: true,
-      opacity: 0.4,
-    });
-
-    // Unit torus, scaled per instance. A ring's radius differs by only ~0.1
-    // between adjacent years, so a single unit geometry scaled in X and Z is
-    // indistinguishable from nine separate geometries and costs one draw.
-    const geo = new THREE.TorusGeometry(1, RING_TUBE, 4, RING_SEGMENTS);
-    geo.rotateX(Math.PI / 2);
-
-    const mesh = new THREE.InstancedMesh(geo, mat, this.rings);
+    // A ring's radius differs by only ~0.1 between adjacent years, so one unit
+    // torus scaled in X and Z is indistinguishable from nine separate geometries.
+    // With batching on, the same reasoning extends across towers: the rings of two
+    // towers whose girth agrees to a twentieth of a unit are the same shape, so
+    // they share one instance buffer and one draw call.
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
     const s = new THREE.Vector3();
     const p = new THREE.Vector3();
+    const matrices = [];
 
     for (let i = 0; i < this.rings; i++) {
       // Rings are evenly spaced up the lower 70% of the stipe
@@ -299,9 +382,20 @@ export class KelpTower {
       p.set(0, y, 0);
       s.set(r, 1, r);
       m.compose(p, q, s);
-      mesh.setMatrixAt(i, m);
+      matrices.push(m.clone());
     }
 
+    this.ringMatrices = matrices;
+    if (this.batchProps) return;
+
+    const mat = new THREE.MeshBasicMaterial({
+      color: COLORS.kelpBladeLit,
+      transparent: true,
+      opacity: 0.4,
+    });
+
+    const mesh = new THREE.InstancedMesh(SHARED.ring, mat, this.rings);
+    for (let i = 0; i < this.rings; i++) mesh.setMatrixAt(i, matrices[i]);
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingSphere();
     this.ringMesh = mesh;
@@ -352,7 +446,35 @@ export class KelpTower {
       COLORS.running;
 
     const count = this.isMobile ? 3 : 6;
-    const geo = new THREE.CylinderGeometry(0.05, 0.09, 1, 5);
+    this.tubeWormCount = count;
+
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const s = new THREE.Vector3();
+    const p = new THREE.Vector3();
+    const e = new THREE.Euler();
+    const matrices = [];
+
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * Math.PI * 2 + 0.3;
+      const r = this.girth * (1.4 + this.rng() * 0.7);
+      const h = 0.5 + this.rng() * 0.8;
+      p.set(Math.cos(a) * r, h * 0.5, Math.sin(a) * r);
+      e.set((this.rng() - 0.5) * 0.4, a, (this.rng() - 0.5) * 0.4);
+      q.setFromEuler(e);
+      s.set(1, h, 1);
+      m.compose(p, q, s);
+      matrices.push(m.clone());
+    }
+
+    this._wormPhases = [];
+    for (let i = 0; i < count; i++) this._wormPhases.push(this.rng() * 6.28);
+    // The last `count` RNG draws are the worm lean; the matrices themselves are
+    // not kept, because the update loop rewrites them every frame anyway.
+
+    // Not batched: these pulse, and their animation lives in this tower's update
+    // loop. Batching them would mean a shared buffer written from twenty-three
+    // places per frame, which trades a draw call for a dependency.
     const mat = new THREE.MeshStandardMaterial({
       color,
       emissive: new THREE.Color(color),
@@ -360,27 +482,11 @@ export class KelpTower {
       roughness: 0.6,
     });
 
-    const mesh = new THREE.InstancedMesh(geo, mat, count);
-    const m = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    const s = new THREE.Vector3();
-    const p = new THREE.Vector3();
-
-    for (let i = 0; i < count; i++) {
-      const a = (i / count) * Math.PI * 2 + 0.3;
-      const r = this.girth * (1.4 + Math.random() * 0.7);
-      const h = 0.5 + Math.random() * 0.8;
-      p.set(Math.cos(a) * r, h * 0.5, Math.sin(a) * r);
-      q.setFromEuler(new THREE.Euler((Math.random() - 0.5) * 0.4, a, (Math.random() - 0.5) * 0.4));
-      s.set(1, h, 1);
-      m.compose(p, q, s);
-      mesh.setMatrixAt(i, m);
-    }
+    const mesh = new THREE.InstancedMesh(SHARED.worm, mat, count);
+    for (let i = 0; i < count; i++) mesh.setMatrixAt(i, matrices[i]);
     mesh.instanceMatrix.needsUpdate = true;
     this.group.add(mesh);
     this.tubeWorms = mesh;
-    this._wormPhases = [];
-    for (let i = 0; i < count; i++) this._wormPhases.push(Math.random() * 6.28);
   }
 
   // -------------------------------------------------------------------------
@@ -471,9 +577,41 @@ export class KelpTower {
     }
   }
 
+  /**
+   * Build the mesh for one shape the batch declined to take.
+   *
+   * The batch poses every prop and only draws a shape when the group holds
+   * enough instances to be worth a shared buffer. Below that, the tower builds
+   * its own InstancedMesh from the SAME unit geometry the batch would have used —
+   * so the shape is identical, and only the buffer's owner differs.
+   *
+   * The matrix array is the batch's, not a copy: if the batch ever takes over
+   * later, it reads the same matrices the tower would have.
+   */
+  buildProp(kind, matrices, material) {
+    const geometry = kind === "ring" ? SHARED.ring : SHARED.tendril;
+    if (!matrices || !matrices.length) return null;
+
+    const mesh = new THREE.InstancedMesh(geometry, material, matrices.length);
+    for (let i = 0; i < matrices.length; i++) {
+      mesh.setMatrixAt(i, matrices[i]);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.computeBoundingSphere();
+    this.group.add(mesh);
+    if (kind === "ring") this.ringMesh = mesh;
+    return mesh;
+  }
+
   dispose() {
+    // The unit geometries in SHARED belong to the module, not to this tower, and
+    // are referenced by every other tower and by the batch. Disposing one here
+    // would delete the buffers the rest of the forest is still drawing from — a
+    // tower that unmounts must not take the others' rings with it.
+    const shared = new Set(Object.values(SHARED));
+
     this.group.traverse((o) => {
-      if (o.geometry) o.geometry.dispose();
+      if (o.geometry && !shared.has(o.geometry)) o.geometry.dispose();
       if (o.material) {
         if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
         else o.material.dispose();

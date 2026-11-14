@@ -65,6 +65,7 @@ import { KelpTower } from "./KelpTower";
 import { WhaleWithSculpt } from "./WhaleFactory";
 import { CreatureSystem, AmbientSchool } from "./CreatureGeometry";
 import { LegacyColony } from "./LegacyCreatures";
+import { KelpBatch } from "./KelpBatch";
 import { SonarObelisk, buildClusterLights } from "./SonarObelisk";
 import { CameraRig } from "./CameraRig";
 import { SelectionMarker } from "./SelectionMarker";
@@ -704,12 +705,27 @@ export class OceanWorld {
     return true;
   }
 
+  /**
+   * The batch that holds every tower's static props, created on first use.
+   *
+   * It needs `this.scene`, and the constructor runs before `_initScene()`, so it
+   * cannot be built there — doing that constructed a KelpBatch whose `scene` was
+   * undefined, and the first `_make` threw "Cannot read properties of undefined
+   * (reading 'add')", which the error boundary rendered as "WebGL could not
+   * start". Created here, after the scene exists and before any tower asks for it.
+   */
+  _batch() {
+    if (!this.kelpBatch) this.kelpBatch = new KelpBatch(this.scene);
+    return this.kelpBatch;
+  }
+
   _addRepoTowers(repos, opts) {
     for (const repo of repos) {
       const pos = repo.position || [0, 0];
       const tower = new KelpTower(repo, {
         quality: this.quality,
         isMobile: this.isMobile,
+        batchProps: true,
       });
       // Sit the holdfast ON the sediment, not at y=0. The floor displaces by
       // up to ±90 units, so a fixed y either floated the tower in open water
@@ -738,7 +754,9 @@ export class OceanWorld {
       this.pickables.push(tower.group);
 
       this._populateEntry(entry, repo, opts);
+      this._batch().add(tower);
     }
+    this._batch().build();
   }
 
   _addAmbientTowers() {
@@ -752,6 +770,7 @@ export class OceanWorld {
       const tower = new KelpTower(repo, {
         quality: "low",
         isMobile: this.isMobile,
+        batchProps: true,
       });
       const pos = repo.position || [0, 0];
       const zBase =
@@ -765,7 +784,13 @@ export class OceanWorld {
       tower.group.scale.setScalar(0.78 + ((i * 37) % 50) / 100);
       this.scene.add(tower.group);
       this.towers.push({ tower, repo, entry: null });
+      this._batch().add(tower);
     }
+    // Built here too: the ambient towers are added after the named ones, and the
+    // first build is what turns the recorded matrices into buffers. A tower added
+    // after a build would have no mesh until the next one, so the batch is built
+    // once at the end of the pass that owns it.
+    this._batch().build();
   }
 
   // =========================================================================
@@ -1116,6 +1141,10 @@ export class OceanWorld {
         rec.tower.update(delta);
       }
 
+      // The batched props are posed in world space, so they have to be re-posed
+      // after the towers move — once per frame, not once per tower.
+      if (this.kelpBatch) this.kelpBatch.update();
+
       // --- Legacy fauna ---
       // These ride on the tower groups, so they inherit every tower transform
       // for free and need no world-space bookkeeping of their own.
@@ -1337,6 +1366,7 @@ export class OceanWorld {
     if (this.rig) this.rig.dispose();
 
     for (const t of this.towers) t.tower.dispose();
+    if (this.kelpBatch) this.kelpBatch.dispose();
     for (const l of this.legacy) l.dispose();
     for (const w of this.whales) w.whale.dispose();
     for (const c of this.creatureSystems) c.system.dispose();
