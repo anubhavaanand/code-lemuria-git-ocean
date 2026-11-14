@@ -227,6 +227,10 @@ What is deliberately not built yet:
   and parallax, but not a full 3D sphere. That is the next major version.
 - Multiplayer, metro transport, obelisk skin voting.
 
+The full reasoning behind the design, and the order the remaining work is in,
+is in **[docs/VISION.md](docs/VISION.md)** and
+**[docs/ROADMAP.md](docs/ROADMAP.md)**.
+
 ---
 
 ## 🛠 Running it
