@@ -1298,6 +1298,30 @@ kbd {
   }
 }
 
+/* Narrow screens: the card takes the width, so the readout and the tooltip
+   move above it rather than sitting underneath. `calc(100vw - 460px)` goes
+   negative here, which would collapse the readout to nothing exactly when it
+   is most useful — the one zoom a phone user lands on. */
+@media (max-width: 820px) {
+  .go-readout {
+    left: 12px;
+    right: 12px;
+    bottom: auto;
+    top: 132px;
+    max-width: none;
+  }
+  .go-tooltip {
+    bottom: auto;
+    top: 100px;
+  }
+}
+
+@media (max-width: 520px) {
+  .go-readout {
+    display: none;
+  }
+}
+
 /* Respect reduced-motion: stop the pulsing, keep the function */
 @media (prefers-reduced-motion: reduce) {
   *,
