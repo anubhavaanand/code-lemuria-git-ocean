@@ -23,9 +23,18 @@ import { COLORS, towerHeight, towerGirth, languageStyleColor } from "./constants
 import { kelpVertex, kelpFragment } from "./shaders";
 
 // A growth ring per year of history, capped so an ancient repo stays sane
+// A growth ring per year of history, capped so an ancient repo stays sane
 function ringCount(ageDays) {
   return THREE.MathUtils.clamp(Math.floor((ageDays || 0) / 365), 0, 9);
 }
+
+// Growth rings are decorative and static, so they are one InstancedMesh rather
+// than one Mesh per ring. The old code created up to nine TorusGeometry
+// instances per tower purely for bands — across 23 towers that is a visible
+// slice of the 728 draw calls measured at city zoom, for geometry that never
+// moves.
+const RING_SEGMENTS = 12;
+const RING_TUBE = 0.018;
 
 export class KelpTower {
   constructor(repo, opts = {}) {
@@ -269,18 +278,34 @@ export class KelpTower {
       opacity: 0.4,
     });
 
+    // Unit torus, scaled per instance. A ring's radius differs by only ~0.1
+    // between adjacent years, so a single unit geometry scaled in X and Z is
+    // indistinguishable from nine separate geometries and costs one draw.
+    const geo = new THREE.TorusGeometry(1, RING_TUBE, 4, RING_SEGMENTS);
+    geo.rotateX(Math.PI / 2);
+
+    const mesh = new THREE.InstancedMesh(geo, mat, this.rings);
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const s = new THREE.Vector3();
+    const p = new THREE.Vector3();
+
     for (let i = 0; i < this.rings; i++) {
       // Rings are evenly spaced up the lower 70% of the stipe
       const t = (i + 1) / (this.rings + 1);
       const y = this.height * t * 0.72;
       const r = this.girth * (0.34 - t * 0.12);
 
-      const geo = new THREE.TorusGeometry(r, 0.018, 4, 12);
-      const band = new THREE.Mesh(geo, mat);
-      band.rotation.x = Math.PI / 2;
-      band.position.y = y;
-      this.group.add(band);
+      p.set(0, y, 0);
+      s.set(r, 1, r);
+      m.compose(p, q, s);
+      mesh.setMatrixAt(i, m);
     }
+
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.computeBoundingSphere();
+    this.ringMesh = mesh;
+    this.group.add(mesh);
   }
 
   // -------------------------------------------------------------------------
