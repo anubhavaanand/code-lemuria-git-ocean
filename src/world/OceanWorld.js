@@ -589,8 +589,11 @@ export class OceanWorld {
       // A drag is a look, not a click. Only a short, still press counts.
       if (dist > 6 || dt > 500) return;
 
-      if (this._pickAt(e.clientX, e.clientY)) this.select(this._pickAt.lastId);
-      else this.select(null);
+      if (this._pickAt(e.clientX, e.clientY)) {
+        this.select(this._pickAt.lastId, this._pickAt.lastCreature);
+      } else {
+        this.select(null);
+      }
     };
 
     // Hover is stored rather than raycast per event: pointermove fires far more
@@ -641,6 +644,19 @@ export class OceanWorld {
       return null;
     }
 
+    // The creature is resolved BEFORE the walk to the tower, because that walk
+    // mutates `node` — by the time it reaches the tower group there is nothing
+    // left to ask about the polyp that was actually hit.
+    const hitCreature = (() => {
+      for (const t of this.towers) {
+        if (t.entry && t.entry.legacy) {
+          const c = t.entry.legacy.creatureAt(hits[0].object);
+          if (c) return c;
+        }
+      }
+      return null;
+    })();
+
     // Walk up to the tower group. A hit is on a leaf — a blade, a polyp, a
     // creature — and the only useful answer is the tower it belongs to.
     let node = hits[0].object;
@@ -648,19 +664,23 @@ export class OceanWorld {
     const found = this.towers.find((t) => t.tower.group === node);
     if (!found || !found.entry) {
       this._pickAt.lastId = null;
+      this._pickAt.lastCreature = null;
       return null;
     }
     this._pickAt.lastId = found.entry.repo.id;
+    this._pickAt.lastCreature = hitCreature;
     return found.tower;
   }
 
   /** Select a repo by id (or null to clear). Fires onSelect. */
-  select(repoId) {
+  select(repoId, creature = null) {
     this.selectedId = repoId;
+    this.selectedCreature = creature;
 
     if (!repoId) {
       this.focusPoint = null;
       this.selectedFauna = null;
+      this.selectedCreature = null;
       if (this.marker) this.marker.setSelected(null);
       this.onSelect(null);
       return;
@@ -669,6 +689,7 @@ export class OceanWorld {
     const entry = this.entries.get(repoId);
     if (!entry) {
       this.selectedFauna = null;
+      this.selectedCreature = null;
       if (this.marker) this.marker.setSelected(null);
       this.onSelect(null);
       return;
@@ -708,10 +729,17 @@ export class OceanWorld {
     // Attach the built fauna so the HUD's creature list describes the colony
     // that exists, not the eighteen that could exist. The registry is the
     // builders' own record, so it cannot disagree with the geometry.
+    // `creature` is passed through rather than looked up from the scene, so a
+    // caller that already knows what it clicked (the picker) does not have to
+    // raycast a second time, and a caller that does not (a keyboard shortcut,
+    // a deep link) simply gets null and the card opens on the overview.
     this.onSelect(
       entry.fauna
-        ? Object.assign({}, entry.repo, { __fauna: entry.fauna })
-        : entry.repo
+        ? Object.assign({}, entry.repo, {
+            __fauna: entry.fauna,
+            __creature: creature,
+          })
+        : Object.assign({}, entry.repo, { __creature: creature })
     );
   }
 

@@ -142,6 +142,12 @@ export class LegacyColony {
     // build, which is the one fact the census exists to establish.
     this.registry = [];
 
+    // Creature root node → creature name. Populated by `tag()`, which every
+    // builder calls on the object it considers the creature's body, so a click
+    // anywhere inside that subtree resolves to the creature rather than to the
+    // kelp tower around it.
+    this.roots = new Map();
+
     this.build();
   }
 
@@ -197,7 +203,62 @@ export class LegacyColony {
    * @param {number} [count]    instance count, for the HUD and the census
    */
   _record(name, field, meaning, count) {
-    this.registry.push({ name, field, meaning, count: count != null ? count : 1 });
+    this.registry.push({
+      name,
+      field,
+      meaning,
+      count: count != null ? count : 1,
+      // The object a click on this creature resolves to. Picking walks a hit up
+      // to the tower, which is all a click used to be able to answer; without
+      // this a polyp and a kelp blade are the same object by the time the walk
+      // finishes.
+      //
+      // Not derived from `this.group.children` at record time: a builder that
+      // keeps adding nodes afterwards would silently retag itself onto the wrong
+      // object, and the tag would be a coincidence of ordering rather than a
+      // claim about identity. Instead the tag is written on the creature's root
+      // the first time `creatureAt` sees a node inside it, and only that root
+      // and its descendants can be marked.
+      node: null,
+    });
+  }
+
+  /**
+   * Which creature a raycast hit belongs to, or null.
+   *
+   * Walks up from the hit looking for a node this colony tagged as a creature
+   * root. Bounded by the depth of the group, which is small — a few wrappers at
+   * most — so it costs nothing on a click, and it is not run per frame.
+   *
+   * @param {THREE.Object3D} node
+   * @returns {string|null}
+   */
+  creatureAt(node) {
+    // The nearest registered root above the hit, if there is one. A creature is
+    // a whole subtree — a coral dome, an instanced crown, a fish — and clicking
+    // any part of it should name the creature, not the part.
+    let n = node;
+    let root = null;
+    while (n && n !== this.group) {
+      if (this.roots.has(n)) {
+        root = n;
+        break;
+      }
+      n = n.parent;
+    }
+    return root ? this.roots.get(root) : null;
+  }
+
+  /**
+   * Mark `obj` as the root of creature `name`.
+   *
+   * Call after the creature's own geometry is in place but before the next
+   * builder runs. Tagging is by identity, not by position in `group.children`,
+   * so a builder is free to add helper nodes afterwards.
+   */
+  tag(name, obj) {
+    if (!obj) return;
+    this.roots.set(obj, name);
   }
 
   /** Creatures that actually built for this colony. */
@@ -263,6 +324,7 @@ export class LegacyColony {
     dome.rotation.y = this.rng() * Math.PI;
     this.group.add(dome);
     this.brainCoral = dome;
+    this.tag("brainCoral", dome);
     this._record("brainCoral", "readmeQuality", "README structure", Math.round(2 + q * 9));
   }
 
@@ -304,6 +366,7 @@ export class LegacyColony {
     tentacles.instanceMatrix.needsUpdate = true;
     base.add(tentacles);
     this.anemone = base;
+    this.tag("anemone", base);
     this._record("anemone", "hasCodeOfConduct", "code of conduct", 1);
 
     // Slow pulse — anemones breathe by contracting
@@ -349,6 +412,7 @@ export class LegacyColony {
     body.rotation.y = this.rng() * Math.PI * 2;
     this.group.add(body);
     this.isopod = body;
+    this.tag("isopod", body);
     this._record("isopod", "hasIssueTemplate", "issue template", 1);
 
     const baseA = body.rotation.y;
@@ -464,9 +528,14 @@ export class LegacyColony {
     };
 
     this._writeUrchins(0);
-    this.group.add(cores);
-    this.group.add(spineMesh);
+    // One creature is two instanced meshes — cores and spines — so the tag goes
+    // on a wrapper that contains both, otherwise clicking a spine names nothing.
+    const bed = new THREE.Group();
+    bed.add(cores);
+    bed.add(spineMesh);
+    this.group.add(bed);
     this.urchins = n;
+    this.tag("urchins", bed);
     this._record("urchins", "discussionsOpen", "open discussions", n);
 
     if (!this.isMobile) {
@@ -489,6 +558,7 @@ export class LegacyColony {
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     mesh.frustumCulled = false;
     this.group.add(mesh);
+    this.tag("copepods", mesh);
 
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
@@ -623,6 +693,7 @@ export class LegacyColony {
     crinoid.rotation.y = th;
     this.group.add(crinoid);
     this.featherStar = crinoid;
+    this.tag("featherStar", crinoid);
     this._record("featherStar", "releases", "releases", arms);
 
     this.animated.push((t) => {
@@ -655,6 +726,7 @@ export class LegacyColony {
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     mesh.frustumCulled = false;
     this.group.add(mesh);
+    this.tag("amphipods", mesh);
 
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
@@ -728,6 +800,7 @@ export class LegacyColony {
     ring.instanceMatrix.needsUpdate = true;
     this.group.add(ring);
     this.barnacleRing = ring;
+    this.tag("barnacleRing", ring);
     this._record("barnacleRing", "hasHomepage", "homepage", ring.count);
   }
 
@@ -755,6 +828,7 @@ export class LegacyColony {
     sponge.rotation.x = Math.sin(th) * 0.25;
     this.group.add(sponge);
     this.sponge = sponge;
+    this.tag("sponge", sponge);
     this._record("sponge", "hasWiki", "wiki", 1);
   }
 
@@ -802,6 +876,7 @@ export class LegacyColony {
     fish.position.set(r, y, 0);
     this.group.add(fish);
     this.parrotfish = fish;
+    this.tag("parrotfish", fish);
     this._record("parrotfish", "hasChangelog", "changelog", 1);
 
     this.animated.push((t) => {
@@ -848,6 +923,7 @@ export class LegacyColony {
     horse.rotation.y = -th;
     this.group.add(horse);
     this.seahorse = horse;
+    this.tag("seahorse", horse);
     this._record("seahorse", "preRelease", "pre-release", 1);
 
     this.animated.push((t) => {
@@ -899,6 +975,7 @@ export class LegacyColony {
     fish.rotation.y = -a0;
     this.group.add(fish);
     this.grouper = fish;
+    this.tag("grouper", fish);
     this._record("grouper", "branchCount", "branch count", b);
 
     this.animated.push((t) => {
@@ -932,6 +1009,7 @@ export class LegacyColony {
     }
     this.group.add(fish);
     this.cleanerWrasse = fish;
+    this.tag("cleanerWrasse", fish);
     this._record("cleanerWrasse", "hasContributing", "contributing guide", n);
 
     this.animated.push((t) => {
@@ -997,7 +1075,12 @@ export class LegacyColony {
     crownMesh.instanceMatrix.needsUpdate = true;
     bodyMesh.computeBoundingSphere();
     crownMesh.computeBoundingSphere();
-    this.group.add(bodyMesh, crownMesh);
+    // Body and crown are one animal, so they share a wrapper for picking.
+    const bed = new THREE.Group();
+    bed.add(bodyMesh);
+    bed.add(crownMesh);
+    this.group.add(bed);
+    this.tag("coralPolyp", bed);
     // Counted by the fauna census, which asks how many of each creature a repo
     // grew rather than what meshes it is made of.
     this.coralPolyp = new Array(n).fill(0);
@@ -1021,6 +1104,7 @@ export class LegacyColony {
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     mesh.frustumCulled = false;
     this.group.add(mesh);
+    this.tag("lanternfish", mesh);
 
     const lamps = [];
     for (let i = 0; i < n; i++) {
@@ -1129,7 +1213,11 @@ export class LegacyColony {
     };
 
     write(0);
-    this.group.add(bodyMesh, rhMesh);
+    const slug = new THREE.Group();
+    slug.add(bodyMesh);
+    slug.add(rhMesh);
+    this.group.add(slug);
+    this.tag("nudibranch", slug);
     this.animated.push(write);
     this.nudibranch = slugs;
     this._record("nudibranch", "hasPRTemplate", "PR template", n);
@@ -1196,6 +1284,7 @@ export class LegacyColony {
     shark.position.set(0, this.yAt(0.75), -this.G * 9);
     this.group.add(shark);
     this.baskingShark = shark;
+    this.tag("baskingShark", shark);
     this._record("baskingShark", "readmeLength", "README length", 1);
 
     this.animated.push((t) => {
@@ -1257,6 +1346,7 @@ export class LegacyColony {
     fish.rotation.y = -th;
     this.group.add(fish);
     this.anglerfish = fish;
+    this.tag("anglerfish", fish);
     this._record("anglerfish", "securityScanning", "security scanning", 1);
 
     this.animated.push((t) => {

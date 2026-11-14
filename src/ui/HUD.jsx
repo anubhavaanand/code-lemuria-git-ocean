@@ -130,10 +130,21 @@ const WHALE_LABEL = {
 };
 
 function RepoCard({ repo, onClose, onFocus }) {
-  const [tab, setTab] = useState("overview");
+  // A creature clicked in the world opens the creatures tab, because the codex
+  // entry only exists there. The overview is the right landing state for a
+  // tower clicked generally; an animal clicked specifically should answer the
+  // question the click asked.
+  const [tab, setTab] = useState(
+    repo && repo.__creature ? "creatures" : "overview"
+  );
   // Which creature the user has opened, so the codex can show one entry rather
   // than eighteen. `null` means "show the whole catalogue".
-  const [entry, setEntry] = useState(null);
+  //
+  // Seeded from `repo.__creature` when the card opens: clicking a coral polyp in
+  // the world should land on that polyp's entry, not on the catalogue and not on
+  // the overview. The card is keyed by repo in App.jsx, so a new selection
+  // remounts and this re-seeds rather than carrying the previous tower's choice.
+  const [entry, setEntry] = useState(repo && repo.__creature ? repo.__creature : null);
   if (!repo) return null;
 
   const sp = repo.whaleSpecies || {};
@@ -579,7 +590,11 @@ export default function HUD({
       </div>
 
       {selectedRepo && (
+        // Keyed by id so switching towers remounts the card. The codex entry is
+        // local state seeded from the click; without a remount, a second tower
+        // would open with the first tower's creature still expanded.
         <RepoCard
+          key={selectedRepo.id}
           repo={selectedRepo}
           onClose={onClearSelection}
           onFocus={onFlyTo}
