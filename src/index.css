@@ -12,10 +12,17 @@
   --go-deep: #00203a;
   --go-mid: #003a5c;
 
-  /* Ink */
+  /* Ink.
+   *
+   * `--go-ink-faint` was #64809a, which measures 3.95:1 against a panel at
+   * #0d2138 — below the 4.5:1 AA threshold, and it carries 10.5px labels, which
+   * need 4.5:1 rather than the 3:1 allowed for large text. So the smallest type
+   * in the interface was also the lowest-contrast. Lifted to #7d97b0, which
+   * measures 5.36:1 and stays visibly recessive against --go-ink-dim at 7.88:1.
+   */
   --go-ink: #e8f4fb;
   --go-ink-dim: #9fb8c9;
-  --go-ink-faint: #64809a;
+  --go-ink-faint: #7d97b0;
 
   /* Bioluminescence */
   --go-cyan: #35e0ff;
