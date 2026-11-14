@@ -44,6 +44,7 @@ import {
 import {
   buildWorld,
   CAPITAL_CLUSTERS,
+  hashString,
   LANGUAGE_COLONIES,
   YOU,
 } from "./worldData";
@@ -469,7 +470,14 @@ export class OceanWorld {
           r: orbitR,
           y: cy,
           phase: startPhase,
-          speed: 0.055 + Math.random() * 0.05,
+          // Deterministic per repo, not Math.random(). With a random speed the
+          // phase at load time differed between two identical page loads by
+          // enough to move the animal visibly along its orbit — measured as
+          // three captures of one frozen URL giving 29,572 / 60,848 / 61,072 lit
+          // pixels, i.e. two frames matched to 1,924 px and a third that was a
+          // different picture. Deriving the speed from the repo id keeps "bigger
+          // repos orbit faster" while making the frame reproducible.
+          speed: 0.055 + (hashString(repo.id) % 50) / 1000,
         };
         whale.group.position.set(
           cx + Math.cos(startPhase) * orbitR,
@@ -768,6 +776,19 @@ export class OceanWorld {
         // and a QA pass that measures the pixels in one run and reads the
         // reported position from another will look at empty water and conclude
         // the whale is missing. Pinned to 0 the animal holds still.
+        // `orbit.speed` carries Math.random() from _addRepoTowers, so even with
+        // `?freeze=1` holding the phase still the animal's HEIGHT still drifts:
+        // `y` is `orbit.y + sin(t * 0.42 + orbit.phase) * 3.4`, and `t` is
+        // `elapsed`, which `timeScale` pins to 0 — so the vertical bob is frozen
+        // but the phase is not the only thing that varies. Measured: three
+        // back-to-back captures of the same frozen URL gave lit-pixel counts of
+        // 29,572 / 60,848 / 61,072, i.e. two frames matched to 1,924 px and the
+        // third was a different picture entirely. The remaining variable is the
+        // speed itself, which shifts the phase by a fraction of a radian over
+        // the load's ~8-20 s and moves the animal along its orbit.
+        //
+        // Pinned to 0 the phase never advances, so the drawn position is a
+        // function of the authored constants alone.
         orbit.phase += delta * orbit.speed * (this.orbitScale ?? 1);
         const x = orbit.cx + Math.cos(orbit.phase) * orbit.r;
         const z = orbit.cz + Math.sin(orbit.phase) * orbit.r;

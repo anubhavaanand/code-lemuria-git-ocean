@@ -206,51 +206,31 @@ export default function App() {
             // accessors and can disagree with what the GPU actually draws.
             drawnBounds: (() => {
               if (!w.sculpt) return null;
-              const b = new (w.group.position.constructor)();
-              let lo = [Infinity, Infinity, Infinity];
-              let hi = [0, 0, 0].map(() => -Infinity);
-              const v = new (w.group.position.constructor)();
+              const b = new THREE.Box3();
               w.sculpt.updateWorldMatrix(true, true);
               w.sculpt.traverse((o) => {
                 if (!o.isSkinnedMesh || !o.geometry) return;
-                const p = o.geometry.getAttribute("position");
-                if (!p) return;
-                const stride = Math.max(1, Math.floor(p.count / 400));
-                for (let i = 0; i < p.count; i += stride) {
-                  v.set(p.getX(i), p.getY(i), p.getZ(i));
-                  // Skin it the way the GPU does, so the bounds are the drawn
-                  // bounds rather than the bind pose.
-                  const si = o.geometry.getAttribute("skinIndex");
-                  const sw = o.geometry.getAttribute("skinWeight");
-                  if (si && sw && o.skeleton) {
-                    const acc = new (w.group.position.constructor)();
-                    for (let c = 0; c < 4; c++) {
-                      const j = si.getComponent(i, c);
-                      const wt = sw.getComponent(i, c);
-                      if (!wt || j === undefined) continue;
-                      const bone = o.skeleton.bones[j];
-                      if (!bone) continue;
-                      const m = new (w.group.position.constructor)().multiplyMatrices(
-                        bone.matrixWorld,
-                        o.skeleton.boneInverses[j]
-                      );
-                      acc.addScaledVector(v.clone().applyMatrix4(m), wt);
-                    }
-                    if (acc.lengthSq() > 0) v.copy(acc);
-                  }
-                  v.applyMatrix4(o.matrixWorld);
-                  const e = [v.x, v.y, v.z];
-                  for (let a = 0; a < 3; a++) {
-                    if (e[a] < lo[a]) lo[a] = e[a];
-                    if (e[a] > hi[a]) hi[a] = e[a];
-                  }
-                }
+                o.computeBoundingBox();
+                const bb = o.boundingBox;
+                if (!bb || !isFinite(bb.min.x)) return;
+                b.union(bb.clone().applyMatrix4(o.matrixWorld));
               });
-              if (!lo[0].isFinite || lo[0] === Infinity) return null;
+              if (b.isEmpty()) return null;
+              const s = new THREE.Vector3();
+              b.getSize(s);
+              const c = new THREE.Vector3();
+              b.getCenter(c);
               return {
-                min: lo.map((n) => Number(n.toFixed(2))),
-                max: lo.map((n, i) => Number(hi[i].toFixed(2))),
-                size: lo.map((n, i) => Number((hi[i] - n).toFixed(2))),
+                size: [
+                  Number(s.x.toFixed(2)),
+                  Number(s.y.toFixed(2)),
+                  Number(s.z.toFixed(2)),
+                ],
+                centre: [
+                  Number(c.x.toFixed(2)),
+                  Number(c.y.toFixed(2)),
+                  Number(c.z.toFixed(2)),
+                ],
               };
             })(),
             bodyOffset: (() => {
@@ -493,29 +473,7 @@ export default function App() {
                     Number(q.w.toFixed(3)),
                   ];
                 })(),
-                // World-space AABB of the DEFORMED body, from the CPU-skinned
-                // point cloud. This is the only honest size measurement on this
-                // asset: Box3.setFromObject reads the bind pose, the geometry
-                // accessors read the undeformed mesh, and neither matches what
-                // the GPU draws once the skeleton has posed it.
-                drawnBounds: (() => {
-                  const sculpt = w.sculpt;
-                  if (!sculpt || !sculpt.userData.recentre) return null;
-                  const r = sculpt.userData.recentre;
-                  const b = new THREE.Box3(
-                    new THREE.Vector3().fromArray(r.lo),
-                    new THREE.Vector3().fromArray(r.hi)
-                  );
-                  const inner = sculpt.children && sculpt.children[0];
-                  b.applyMatrix4(inner ? inner.matrixWorld : sculpt.matrixWorld);
-                  const s = new (w.group.position.constructor)();
-                  b.getSize(s);
-                  return [
-                    Number(s.x.toFixed(2)),
-                    Number(s.y.toFixed(2)),
-                    Number(s.z.toFixed(2)),
-                  ];
-                })(),
+
                 // Whether the load-time re-centring actually ran, and what it
                 // measured. Three different correction formulas produced byte-
                 // identical rendered offsets, which is only possible if the
@@ -525,16 +483,21 @@ export default function App() {
                   const r = w.sculpt && w.sculpt.userData
                     ? w.sculpt.userData.recentre
                     : null;
-                  return r
-                    ? {
-                        sampled: r.sampled,
-                        lo: r.lo.map((v) => Number(v.toFixed(2))),
-                        hi: r.hi.map((v) => Number(v.toFixed(2))),
-                        localCentre: r.localCentre.map((v) =>
-                          Number(v.toFixed(2))
-                        ),
-                      }
-                    : null;
+                  if (!r) return null;
+                  // The record's shape changed when the correction was
+                  // rewritten to measure in world space and parent first.
+                  // Both shapes are reported so a stale build cannot make the
+                  // field silently vanish and be read as "the block never ran".
+                  const n = (v) => (Array.isArray(v) ? v.map(Number) : v);
+                  return {
+                    sampled: r.sampled,
+                    centre: n(r.centre) || null,
+                    before: n(r.before) || null,
+                    after: n(r.after) || null,
+                    lo: n(r.lo) || null,
+                    hi: n(r.hi) || null,
+                    localCentre: n(r.localCentre) || null,
+                  };
                 })(),
                 sculptChildWorld: (() => {
                   if (!w.sculpt) return null;
@@ -621,17 +584,36 @@ export default function App() {
                 // while the body was plainly elsewhere. Anything derived from a
                 // Box3 on this asset is a bind-pose number and must not be used
                 // to aim a camera or judge a silhouette.
-                deformedBounds: (() => {
+                // World-space AABB of the DRAWN body, straight from three's own
+                // skinned box. This replaced a hand-rolled CPU skinning pass
+                // that got the spaces wrong three times (see the note in
+                // WhaleAssets) and is the only number here that can be trusted
+                // to describe what the GPU drew.
+                //
+                // It was previously named `deformedBounds`; the rename is
+                // deliberate, because the old name referred to a record shape
+                // that no longer exists and two other blocks still guarded on
+                // `r.lo`, which is now undefined and threw
+                // "Cannot read properties of undefined (reading '0')" once a
+                // second from inside Vector3.fromArray.
+                drawnBounds: (() => {
                   if (!w.sculpt) return null;
-                  const inner = w.sculpt.children && w.sculpt.children[0];
-                  if (!inner) return null;
-                  const r = w.sculpt.userData.recentre;
-                  return r
-                    ? {
-                        lo: r.lo.map((v) => Number(v.toFixed(2))),
-                        hi: r.hi.map((v) => Number(v.toFixed(2))),
-                      }
-                    : null;
+                  const b = new THREE.Box3();
+                  w.sculpt.traverse((o) => {
+                    if (!o.isSkinnedMesh || !o.geometry) return;
+                    o.computeBoundingBox();
+                    const bb = o.boundingBox;
+                    if (!bb || !isFinite(bb.min.x)) return;
+                    b.union(bb.clone().applyMatrix4(o.matrixWorld));
+                  });
+                  if (b.isEmpty()) return null;
+                  const s = new THREE.Vector3();
+                  b.getSize(s);
+                  return [
+                    Number(s.x.toFixed(2)),
+                    Number(s.y.toFixed(2)),
+                    Number(s.z.toFixed(2)),
+                  ];
                 })(),
                 drawCalls: (() => {
                   // Renderer info is only meaningful right after a frame, so
@@ -680,28 +662,36 @@ export default function App() {
                   const sculpt = w.sculpt || w.bodyMesh;
                   if (!sculpt) return null;
                   const r = sculpt.userData && sculpt.userData.recentre;
-                  let b;
-                  if (r && r.lo && r.hi) {
-                    // `lo`/`hi` are in inner's PARENT space, because that is the
-                    // space normalizeWhale() measured them in and the space the
-                    // pivot correction is applied in. So they need inner's full
-                    // transform (k, the yaw, and the recentring offset) — which
-                    // is inner.matrixWorld once the wrapper has been assembled.
-                    //
-                    // Using the wrapper's matrix alone applies ky but not k, so
-                    // the box stays in raw GLB units and reports a 7 x 10 px
-                    // animal for a body 48 units long. Using a Box3 over the
-                    // object instead reads the bind pose, which on this rig is
-                    // 0.19 x 0.39 x 0.10 units.
-                    const inner = sculpt.children && sculpt.children[0];
-                    b = new THREE.Box3(
-                      new THREE.Vector3().fromArray(r.lo),
-                      new THREE.Vector3().fromArray(r.hi)
-                    );
-                    b.applyMatrix4(inner ? inner.matrixWorld : sculpt.matrixWorld);
-                  } else {
-                    b = new THREE.Box3().setFromObject(sculpt);
+                  // Built from the DRAWN bounds, not from the pivot record.
+                  //
+                  // The old code reconstructed a box from the recentre record's
+                  // `before`/`after` min/max and then translated it by the
+                  // measured centre. That reproduced the box correctly in node
+                  // and produced x0:-3533 behind:true in the browser, because
+                  // the record describes the clone BEFORE it was parented into
+                  // the scene — a frame that no longer exists by the time the
+                  // census runs. Every number it produced was in dead space.
+                  //
+                  // The drawn bounds come from three's own skinned box taken
+                  // after the clone is in the graph, so they describe the
+                  // animal as it actually stands.
+                  let b = null;
+                  {
+                    const bb = new THREE.Box3();
+                    const sculpt = w.sculpt || w.bodyMesh;
+                    if (sculpt) {
+                      sculpt.updateWorldMatrix(true, true);
+                      sculpt.traverse((o) => {
+                        if (!o.isSkinnedMesh || !o.geometry) return;
+                        o.computeBoundingBox();
+                        const sb = o.boundingBox;
+                        if (!sb || !isFinite(sb.min.x)) return;
+                        bb.union(sb.clone().applyMatrix4(o.matrixWorld));
+                      });
+                      if (!bb.isEmpty()) b = bb;
+                    }
                   }
+                  if (!b) b = new THREE.Box3().setFromObject(sculpt);
                   if (!b || b.isEmpty()) return null;
                   let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, behind = false;
                   for (let i = 0; i < 8; i++) {

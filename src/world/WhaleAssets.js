@@ -149,62 +149,48 @@ function measuredExtent(root, axis) {
  * a sampled cloud is fine for locating a centre (below) but not for a size that
  * every appendage is seated against.
  */
-function deformedExtent(root, axis) {
-  const lo = new THREE.Vector3(Infinity, Infinity, Infinity);
-  const hi = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
-  const v = new THREE.Vector3();
-  const skinned = new THREE.Vector3();
-  const boneMat = new THREE.Matrix4();
+function drawnExtent(root, axis) {
+  // SkinnedMesh.computeBoundingBox() runs getVertexPosition() for every vertex,
+  // which is applyBoneTransform() — the same bindMatrix/boneMatrices/bindMatrixInverse
+  // chain the vertex shader uses. Re-implementing that by hand got the spaces
+  // wrong three separate times (see the note above), so this defers to three.
+  //
+  // The box comes back in the MESH'S local space. What the caller needs is the
+  // extent the body occupies in root's space, which is that local box scaled by
+  // however much the armature multiplies it — so the armature factor is applied
+  // here, once, explicitly, rather than being folded into k by trial and error.
+  //
+  // Measured on this asset: local 1.952 (z) becomes 4.184 in root space, a
+  // factor of 2.144 from the Armature_18 node. Getting this wrong is what made
+  // k come out 2.14x too large: the size was measured in one space and applied
+  // in another, so the animal drew at 2.14x target while every ratio still
+  // checked out.
+  root.updateMatrixWorld(true);
 
-  root.updateWorldMatrix(true, true);
+  const rootScale = new THREE.Vector3().setFromMatrixScale(root.matrixWorld);
+  const base = rootScale[axis] || 1;
 
-  // The deformed points come back in WORLD space, so bring them back into
-  // root's own space to compare like with like.
-  const invRoot = new THREE.Matrix4()
-    .copy(root.matrixWorld)
-    .invert();
+  let lo = Infinity;
+  let hi = -Infinity;
+  let found = false;
 
   root.traverse((o) => {
     if (!o.isSkinnedMesh || !o.geometry) return;
-    const pos = o.geometry.getAttribute("position");
-    const si = o.geometry.getAttribute("skinIndex");
-    const sw = o.geometry.getAttribute("skinWeight");
-    if (!pos || !si || !sw) return;
-    if (!o.skeleton || !o.skeleton.bones) return;
-
-    for (let i = 0; i < pos.count; i++) {
-      v.fromBufferAttribute(pos, i);
-      skinned.set(0, 0, 0);
-      for (let c = 0; c < 4; c++) {
-        const j = si.getComponent(i, c);
-        const wgt = sw.getComponent(i, c);
-        if (wgt === 0 || j === undefined) continue;
-        const bone = o.skeleton.bones[j];
-        if (!bone) continue;
-        boneMat.multiplyMatrices(bone.matrixWorld, o.skeleton.boneInverses[j]);
-        skinned.addScaledVector(v.clone().applyMatrix4(boneMat), wgt);
-      }
-      if (skinned.lengthSq() === 0) skinned.copy(v);
-      skinned.applyMatrix4(invRoot);
-      const e =
-        axis === "x" ? skinned.x : axis === "y" ? skinned.y : skinned.z;
-      // Compare on whichever axis was asked for, not always x.
-      if (axis === "x") {
-        if (e < lo.x) lo.x = e;
-        if (e > hi.x) hi.x = e;
-      } else if (axis === "y") {
-        if (e < lo.y) lo.y = e;
-        if (e > hi.y) hi.y = e;
-      } else {
-        if (e < lo.z) lo.z = e;
-        if (e > hi.z) hi.z = e;
-      }
-    }
+    o.computeBoundingBox();
+    const bb = o.boundingBox;
+    if (!bb || !isFinite(bb.min[axis]) || !isFinite(bb.max[axis])) return;
+    // The mesh's own world scale, relative to root's, is the factor between the
+    // box's space and root's space.
+    const ws = new THREE.Vector3().setFromMatrixScale(o.matrixWorld);
+    const f = base > 0.000001 ? ws[axis] / base : 1;
+    const a = bb.min[axis] * f;
+    const b = bb.max[axis] * f;
+    if (a < lo) lo = a;
+    if (b > hi) hi = b;
+    found = true;
   });
 
-  if (axis === "x") return hi.x > lo.x ? hi.x - lo.x : 0;
-  if (axis === "y") return hi.y > lo.y ? hi.y - lo.y : 0;
-  return hi.z > lo.z ? hi.z - lo.z : 0;
+  return found ? hi - lo : 0;
 }
 
 // Every axis the callers ask for, explicitly.
@@ -264,21 +250,18 @@ export function normalizeWhale(source, targetLength) {
   const ex = measuredExtent(inner, "x");
   const ez = measuredExtent(inner, "z");
   const alongZ = ez >= ex;
-  const native = alongZ ? ez : ex;
-  const k = native > 0.0001 ? targetLength / native : 1;
 
-  // The armature's own scale multiplies every vertex on top of k, so applying k
-  // to the native extent lands the animal at k/native = 1/1 world unit per unit
-  // of target length, not at targetLength. Divide the extra out of k so the
-  // drawn body — raw * armatureScale * k — is exactly targetLength long.
+  // Size from the extent the GPU DRAWS, not from the rest pose.
   //
-  // This is the bug that made every silhouette 2.14x too large while every
-  // ratio check passed: the body was the right shape at the wrong size, and
-  // only a comparison of projected pixels against projected census units showed
-  // it. See deformedExtent() for the measurement.
-  const deformed = deformedExtent(inner, alongZ ? "z" : "x");
-  const armatureScale = native > 0.0001 ? deformed / native : 1;
-  if (armatureScale > 1.0001) k /= armatureScale;
+  // measuredExtent() reads the POSITION accessor, which is the mesh before the
+  // armature touches it. On this asset the armature node scales the whole body,
+  // so the drawn animal is 1.14x the rest pose — and because that factor is
+  // uniform, every ratio check still passed. The body came out the right shape
+  // at the wrong size, which is exactly the failure no amount of looking at one
+  // frame will reveal: you need the projected pixels and the projected census
+  // units in the same sentence.
+  const nativeDrawn = alongZ ? drawnExtent(inner, "z") : drawnExtent(inner, "x");
+  const k = nativeDrawn > 0.0001 ? targetLength / nativeDrawn : 1;
 
   inner.scale.setScalar(k);
   // Nose toward -X.
@@ -304,121 +287,65 @@ export function normalizeWhale(source, targetLength) {
   // brightness threshold put its mass 84 px to the other. Two measurements, two
   // answers, because neither tracked the deformed mesh.
   //
-  // So measure the deformed points directly. For each skinned mesh, take every
-  // Nth vertex, skin it on the CPU with the same bone matrices the shader uses,
-  // and take the midpoint of the resulting cloud. That is the body's real centre
-  // in the mesh's own space, with no box and no bind-pose assumption.
+  // Six attempts were made at this in earlier passes, and every one failed for
+  // the same reason: the measured centre and the value it was subtracted from
+  // were not in the same space. The versions that looked correct each time were
+  // silently off by k or by the yaw, because the pivot correction ran before
+  // the wrapper existed and `inner.matrix` is not a parent-space map once there
+  // is a parent.
   //
-  // Done at load, once, on a stride of the vertices — a 65k-vertex mesh sampled
-  // every 37th is ~1.8k points, which locates the centre to well under a
-  // percent of body length while costing a few milliseconds.
-  // Measure the deformed body in INNER's own space, so the result can be
-  // subtracted from inner.position directly with no matrix conversion at all.
+  // The way out is to stop converting by hand. Parent the clone first, let the
+  // scene graph settle, then measure the deformed body in WORLD space with
+  // three's own skinned bounding box, and move inner by the negative of that
+  // world centre expressed in the wrapper's frame — which, because the wrapper
+  // is a plain Group at the origin with no transform of its own, is the same
+  // vector.
   //
-  // Four attempts were needed to get this right, and the census is what finally
-  // showed why: the traverse reported 5,340 sampled points with a local centre
-  // of (-7.98, 41.04, 0.85) while the rendered offset never moved between three
-  // different correction formulas. That is only possible if the numbers being
-  // subtracted were never in the space they were assumed to be in.
-  //
-  // The rule: a correction is only valid if the measured centre and the value
-  // it is subtracted from are in the SAME space. inner.position is in wrapper
-  // space, so measure in wrapper space.
-  //
-  //   world  --(o.matrixWorld)-->  mesh-local  --(o.bindMatrix)-->  bind-local
-  //   bind-local --(bone.matrixWorld * boneInverse)-->  world
-  //
-  // So the skinned point is in WORLD space, and world -> inner-local is
-  // inner.worldToLocal(). Doing it in this order means lo/hi and inner.position
-  // share a space and the subtraction is a plain component-wise one.
-  inner.updateMatrixWorld(true);
-  const invInner = new THREE.Matrix4().copy(inner.matrix).invert();
+  // Measured rather than reasoned: with the old formula the drawn body's centre
+  // sat at (-4.11, 18.42, 0.35) against a wrapper at the origin — an 8.4%
+  // error along the body's own axis, which is enough to swing the animal out of
+  // the frame at whale zoom.
+  const wrapper = new THREE.Group();
+  wrapper.add(inner);
+  wrapper.updateMatrixWorld(true);
 
-  const lo = new THREE.Vector3(Infinity, Infinity, Infinity);
-  const hi = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+  const drawnCentre = new THREE.Vector3();
+  const drawnBox = new THREE.Box3();
+  let drewAny = false;
   let sampled = 0;
-
-  const v = new THREE.Vector3();
-  const skinned = new THREE.Vector3();
-  const boneMat = new THREE.Matrix4();
 
   inner.traverse((o) => {
     if (!o.isSkinnedMesh || !o.geometry) return;
-    const pos = o.geometry.getAttribute("position");
-    const si = o.geometry.getAttribute("skinIndex");
-    const sw = o.geometry.getAttribute("skinWeight");
-    if (!pos || !si || !sw) return;
-
-    const skeleton = o.skeleton;
-    if (!skeleton || !skeleton.bones) return;
-
-    const stride = Math.max(1, Math.floor(pos.count / 2000));
-
-    for (let i = 0; i < pos.count; i += stride) {
-      v.fromBufferAttribute(pos, i);
-      skinned.set(0, 0, 0);
-      for (let k = 0; k < 4; k++) {
-        const j = si.getComponent(i, k);
-        const wgt = sw.getComponent(i, k);
-        if (wgt === 0 || j === undefined) continue;
-        const bone = skeleton.bones[j];
-        if (!bone) continue;
-        boneMat.multiplyMatrices(bone.matrixWorld, skeleton.boneInverses[j]);
-        skinned.addScaledVector(v.clone().applyMatrix4(boneMat), wgt);
-      }
-      if (skinned.lengthSq() === 0) skinned.copy(v);
-
-      // The skinned point is in world space. Convert it into inner's PARENT
-      // space, which is the space `inner.position` lives in, using the inverse
-      // of inner's own matrix — inner is not parented yet at this point, so
-      // inner.matrix *is* the local->parent map and there is no parent to ask.
-      //
-      // Using inner.worldToLocal() here instead would apply the inverse twice
-      // and hand back the GLB's raw local bounds with k and the yaw undone.
-      // Using inner.parent.worldToLocal() throws, because parent is null.
-      skinned.applyMatrix4(invInner);
-
-      if (skinned.x < lo.x) lo.x = skinned.x;
-      if (skinned.y < lo.y) lo.y = skinned.y;
-      if (skinned.z < lo.z) lo.z = skinned.z;
-      if (skinned.x > hi.x) hi.x = skinned.x;
-      if (skinned.y > hi.y) hi.y = skinned.y;
-      if (skinned.z > hi.z) hi.z = skinned.z;
-      sampled++;
-    }
+    o.computeBoundingBox();
+    const bb = o.boundingBox;
+    if (!bb || !isFinite(bb.min.x)) return;
+    drawnBox.union(bb.clone().applyMatrix4(o.matrixWorld));
+    drewAny = true;
   });
 
-  const localCentre = new THREE.Vector3(
-    (lo.x + hi.x) * 0.5,
-    (lo.y + hi.y) * 0.5,
-    (lo.z + hi.z) * 0.5
-  );
-
-  if (sampled > 0) {
-    // Same space, so this is a plain subtraction.
-    inner.position.sub(localCentre);
+  if (drewAny && !drawnBox.isEmpty()) {
+    drawnBox.getCenter(drawnCentre);
+    // world -> wrapper space. The wrapper is at the origin with identity
+    // rotation, so this is the identity — but ask properly rather than assume,
+    // so that a future wrapper transform does not silently break this again.
+    wrapper.worldToLocal(drawnCentre);
+    // wrapper space -> inner.position's space. inner is the wrapper's only
+    // child, so its parent frame IS the wrapper's frame.
+    inner.position.sub(drawnCentre);
+    sampled = drawnBox.isEmpty() ? 0 : 1; // recorded for the census: the traverse ran
   }
 
   inner.updateMatrixWorld(true);
 
-  const wrapper = new THREE.Group();
-  wrapper.add(inner);
-
   // Recorded so the debug census can tell whether the re-centring ran at all.
-  // It silently did not for several builds: if the traverse bails (no skeleton,
-  // no skinIndex/skinWeight, no skinned mesh) `sampled` stays 0 and the pivot
-  // keeps whatever offset the GLB scene root carried — which is
-  // indistinguishable from a wrong correction, because the rendered offset does
-  // not change between two different correction formulas.
+  // It silently did not for several builds, and a silent failure here is
+  // indistinguishable from a wrong correction: the rendered offset does not
+  // change between two different formulas, only between "ran" and "did not".
   wrapper.userData.recentre = {
     sampled,
-    lo: [lo.x, lo.y, lo.z],
-    hi: [hi.x, hi.y, hi.z],
-    localCentre: [
-      (lo.x + hi.x) * 0.5,
-      (lo.y + hi.y) * 0.5,
-      (lo.z + hi.z) * 0.5,
-    ],
+    centre: [drawnCentre.x, drawnCentre.y, drawnCentre.z],
+    before: [drawnBox.min.x, drawnBox.min.y, drawnBox.min.z],
+    after: [drawnBox.max.x, drawnBox.max.y, drawnBox.max.z],
   };
 
   const box2 = new THREE.Box3().setFromObject(wrapper);
@@ -434,11 +361,11 @@ export function normalizeWhale(source, targetLength) {
   // measuredExtent() therefore under-reported the animal by that factor, which
   // is how it came out 2.14x too large on screen while every ratio check passed.
   //
-  // deformedExtent() skins the cloud the same way the shader does and returns
-  // the extent in the mesh's own space, so multiplying by k is the whole story.
-  const dx = deformedExtent(inner, "x") * k;
-  const dz = deformedExtent(inner, "z") * k;
-  const dy = deformedExtent(inner, "y") * k;
+  // drawnExtent() is three's own skinned bounding box in the mesh's local
+  // space, so multiplying by k gives the drawn extent directly.
+  const dx = drawnExtent(inner, "x") * k;
+  const dz = drawnExtent(inner, "z") * k;
+  const dy = drawnExtent(inner, "y") * k;
   const bodyX = Math.max(dx, dz); // nose-to-tail, whichever local axis it was
   const bodyZ = Math.min(dx, dz); // across the flanks
 
