@@ -368,11 +368,33 @@ export async function fetchTreeSignals(owner, repo, branch) {
  * @param {string} [opts.branch]  default branch; fetched if omitted
  * @returns {Promise<{fields: object, errors: string[]}>}
  */
+/**
+ * The raw repository body, reusing the first pass's copy when it has one.
+ *
+ * `rest()` keys on the path, so once the first pass has fetched
+ * `/repos/{owner}/{repo}` this is a map lookup rather than a request. The only
+ * reason it was not already shared is that the two passes speak to the cache in
+ * different shapes: the first keeps a transformed world record and this wants the
+ * body it came from.
+ */
+async function repoBody(owner, repo) {
+  const key = `rest:/repos/${owner}/${repo}`;
+  const hit = cache.get(key);
+  if (hit) return hit;
+  return rest(`/repos/${owner}/${repo}`, TTL.repo);
+}
+
 export async function enrichRepository(owner, repo, opts = {}) {
   const errors = [];
   const fields = {};
 
-  const settings = await rest(`/repos/${owner}/${repo}`, TTL.repo).catch((e) => {
+  // The repository's own body is already cached by the first pass, which asks
+  // REST for exactly this path — under a different key (`restrepo:`), because the
+  // first pass keeps the transformed record and this wants the raw body. Without
+  // the bridge the enrichment paid for it a second time: one of seven requests
+  // per repository, spent re-reading an answer the page already held, against a
+  // budget of sixty an hour.
+  const settings = await repoBody(owner, repo).catch((e) => {
     errors.push(`settings: ${e.message}`);
     return null;
   });

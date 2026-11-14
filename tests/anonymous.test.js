@@ -160,3 +160,80 @@ describe("anonymous repository loading", () => {
     ).resolves.toBe(null);
   });
 });
+
+describe("the settings body is not fetched twice", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    globalThis.localStorage = {
+      store: {},
+      getItem(k) {
+        return Object.prototype.hasOwnProperty.call(this.store, k) ? this.store[k] : null;
+      },
+      setItem(k, v) {
+        this.store[k] = v;
+      },
+      removeItem(k) {
+        delete this.store[k];
+      },
+      clear() {
+        this.store = {};
+      },
+    };
+  });
+
+  it("the enrichment reuses the first pass's copy of the repository body", async () => {
+    const paths = [];
+    globalThis.fetch = vi.fn(async (url) => {
+      paths.push(String(url));
+      const body = {
+        name: "planetwood",
+        full_name: "anubhavaanand/planetwood",
+        private: false,
+        fork: false,
+        archived: false,
+        size: 153387,
+        stargazers_count: 3,
+        watchers_count: 3,
+        forks_count: 1,
+        open_issues_count: 2,
+        default_branch: "main",
+        language: "HTML",
+        license: { key: "mit" },
+        has_wiki: true,
+        has_pages: false,
+        has_downloads: true,
+        has_issues: true,
+        has_projects: true,
+      };
+      return {
+        ok: true,
+        status: 200,
+        clone() {
+          return this;
+        },
+        json: async () => body,
+        text: async () => JSON.stringify(body),
+        headers: { get: () => null },
+      };
+    });
+
+    const { loadProfile, __clearCacheForTests } = await import("../src/services/profile");
+    __clearCacheForTests();
+    paths.length = 0;
+
+    const p = await loadProfile({
+      owner: "anubhavaanand",
+      repos: ["planetwood"],
+      enrich: true,
+      concurrency: 1,
+    });
+
+    const settingsCalls = paths.filter((u) => /\/repos\/[^/]+\/[^/]+$/.test(u.split("?")[0]));
+    // One for the first pass, and not a second one for the enrichment: the
+    // enrichment asked again and spent a request re-reading an answer the page
+    // already had, against a budget of sixty an hour.
+    expect(settingsCalls.length).toBe(1);
+    expect(p.repos.length).toBe(1);
+    expect(p.repos[0].hasDownloadsEnabled).toBe(true);
+  });
+});

@@ -852,6 +852,17 @@ async function requestRepositoryRest(owner, name, cacheKey) {
   record.source = "rest";
 
   cache.set(cacheKey, record, "STATIC");
+
+  // Mirrored under the enrichment's own key for the raw body.
+  //
+  // The first pass keeps the transformed record and the enrichment wants the body
+  // it came from — four REST-only fields (has_downloads, has_pages, has_wiki,
+  // has_projects) that the transform does not carry. Without this the second pass
+  // asks for /repos/{owner}/{repo} again, which is one of seven requests per
+  // repository spent re-reading an answer the page already had, against a budget
+  // of sixty an hour. Repository identity does not change inside a page view, so
+  // both copies are STATIC.
+  cache.set(`rest:/repos/${owner}/${name}`, r, "STATIC");
   return record;
 }
 
