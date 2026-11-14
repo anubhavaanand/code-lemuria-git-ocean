@@ -491,6 +491,18 @@ export default function HUD({
   onFlyTo,
 }) {
   const [legendOpen, setLegendOpen] = useState(false);
+  // The creature under the pointer, polled from the world's marker. The world
+  // owns the raycast; the HUD owns the DOM, so the name travels across as a
+  // string rather than the scene writing a label itself.
+  const [hoverCreature, setHoverCreature] = useState(null);
+
+  useEffect(() => {
+    if (!world) return;
+    const sync = () =>
+      setHoverCreature(world.marker ? world.marker.hoverCreature || null : null);
+    const id = setInterval(sync, 120);
+    return () => clearInterval(id);
+  }, [world]);
   const [identity, setIdentity] = useState(null);
   const [stats, setStats] = useState(null);
 
@@ -599,6 +611,16 @@ export default function HUD({
           onClose={onClearSelection}
           onFocus={onFlyTo}
         />
+      )}
+
+      {/* Name what the pointer is over. Without this the ring only says
+          "clickable tower"; a user still has to click to learn that the thing
+          under the cursor is a brain coral rather than scenery. */}
+      {hoverCreature && (
+        <div className="go-tooltip" role="status" aria-live="polite">
+          {hoverCreature in CODEX ? CODEX[hoverCreature].label : hoverCreature}
+          <em>{CODEX[hoverCreature] ? CODEX[hoverCreature].field : ""}</em>
+        </div>
       )}
 
       <ZoomRail

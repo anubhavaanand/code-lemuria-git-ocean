@@ -1020,7 +1020,14 @@ export class OceanWorld {
       if (this._pointerDirty) {
         this._pointerDirty = false;
         const hovered = this._pickAt(this._pointerX, this._pointerY);
-        if (this.marker) this.marker.setHover(hovered);
+        if (this.marker) {
+          this.marker.setHover(hovered);
+          // Hovering a creature names it in the tooltip. The ring says "this
+          // tower is clickable" — which was true even before this change — but
+          // the ring cannot say "and this is the animal under your pointer", and
+          // that is the thing a user cannot work out for themselves.
+          this.marker.setHoverCreature(this._pickAt.lastCreature);
+        }
         // Only write the style when it changes; assigning the same string every
         // frame is a style recalculation for no reason.
         const cursor = hovered ? "pointer" : "";

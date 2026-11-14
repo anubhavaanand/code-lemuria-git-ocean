@@ -111,6 +111,30 @@ export class SelectionMarker {
   }
 
   /**
+   * Which creature, if any, the pointer is over.
+   *
+   * The ring says a tower is clickable; this says which animal is under the
+   * cursor. Without it the only way to learn that a particular polyp is a brain
+   * coral is to click it and read the card — a user has no way to explore
+   * without committing.
+   *
+   * Exposed as a string rather than a DOM write: the HUD owns the DOM, and the
+   * world reaching into it would invert the dependency the rest of the scene
+   * keeps.
+   *
+   * @param {string|null} name
+   */
+  setHoverCreature(name) {
+    if (this.hoverCreature === name) return;
+    this.hoverCreature = name || null;
+    // A pointer over the animal but not the ring means the ray hit the
+    // creature on a tower the hover ring is not on; that cannot happen through
+    // the picker (both come from the same cast), but clearing is cheaper than
+    // reasoning about it.
+    if (!name) this.hoverCreature = null;
+  }
+
+  /**
    * Mark a tower as selected, or clear the mark entirely.
    * @param {object|null} tower
    */

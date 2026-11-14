@@ -902,6 +902,38 @@ kbd {
   font-style: italic;
 }
 
+/* Hover tooltip — names the creature under the pointer. Fixed to the bottom
+   centre, above the hint bar, because the pointer can be anywhere and a tooltip
+   that follows it would jitter over the tower it is describing. */
+.go-tooltip {
+  position: absolute;
+  left: 50%;
+  bottom: 74px;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 5px 10px;
+  border-radius: var(--go-radius-sm);
+  border: 1px solid rgba(77, 234, 255, 0.3);
+  background: rgba(3, 13, 24, 0.82);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  font-size: 11px;
+  color: var(--go-ink);
+  pointer-events: none;
+  white-space: nowrap;
+  animation: go-fade-in 140ms ease;
+}
+
+.go-tooltip em {
+  font-style: normal;
+  font-family: var(--go-mono);
+  font-size: 9px;
+  color: var(--go-cyan);
+  letter-spacing: 0.02em;
+}
+
 /* Raw JSON */
 .go-raw {
   flex: 1;
