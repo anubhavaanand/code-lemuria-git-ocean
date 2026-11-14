@@ -128,6 +128,20 @@ export class LegacyColony {
     this.H = this.tower ? this.tower.height : 20;
     this.G = this.tower ? this.tower.girth : 1.2;
 
+    // One registry of what this colony built, keyed by the GitHub field that
+    // drove it. Two consumers read it:
+    //
+    //   - the HUD's "creatures" tab, so the mapping list can say what is
+    //     actually on screen for THIS repo rather than listing all eighteen and
+    //     leaving the user to guess which are present;
+    //   - the fauna census, which counted by guessing at fifteen optional
+    //     properties and could not see a creature at all unless its builder
+    //     remembered to assign one. Two builders never did.
+    //
+    // A field the registry says is absent is a field whose creature did not
+    // build, which is the one fact the census exists to establish.
+    this.registry = [];
+
     this.build();
   }
 
@@ -167,6 +181,28 @@ export class LegacyColony {
     this.buildLanternfish(); //    ← downloadsEnabled
     this.buildBaskingShark(); //   ← readmeLength
     this.buildAnglerfish(); //     ← securityScanning
+  }
+
+  /**
+   * Record that a creature built, and which GitHub field put it there.
+   *
+   * Called by every builder at the point the creature is finished, so the
+   * registry can never drift from the geometry the way a hand-maintained list
+   * does: if a builder returns early, it never records, and the absence is
+   * visible in the census.
+   *
+   * @param {string} name       creature key, e.g. "brainCoral"
+   * @param {string} field      GitHub field it is driven by
+   * @param {string} meaning    short human phrase, for the HUD
+   * @param {number} [count]    instance count, for the HUD and the census
+   */
+  _record(name, field, meaning, count) {
+    this.registry.push({ name, field, meaning, count: count != null ? count : 1 });
+  }
+
+  /** Creatures that actually built for this colony. */
+  get creatures() {
+    return this.registry.map((r) => r.name);
   }
 
   // -------------------------------------------------------------------------
@@ -227,6 +263,7 @@ export class LegacyColony {
     dome.rotation.y = this.rng() * Math.PI;
     this.group.add(dome);
     this.brainCoral = dome;
+    this._record("brainCoral", "readmeQuality", "README structure", Math.round(2 + q * 9));
   }
 
   /** Anemone ← codeOfConduct. A sessile polyp with stinging tentacles. */
@@ -267,6 +304,7 @@ export class LegacyColony {
     tentacles.instanceMatrix.needsUpdate = true;
     base.add(tentacles);
     this.anemone = base;
+    this._record("anemone", "hasCodeOfConduct", "code of conduct", 1);
 
     // Slow pulse — anemones breathe by contracting
     this.animated.push((t) => {
@@ -311,6 +349,7 @@ export class LegacyColony {
     body.rotation.y = this.rng() * Math.PI * 2;
     this.group.add(body);
     this.isopod = body;
+    this._record("isopod", "hasIssueTemplate", "issue template", 1);
 
     const baseA = body.rotation.y;
     const radius = Math.hypot(body.position.x, body.position.z);
@@ -428,6 +467,7 @@ export class LegacyColony {
     this.group.add(cores);
     this.group.add(spineMesh);
     this.urchins = n;
+    this._record("urchins", "discussionsOpen", "open discussions", n);
 
     if (!this.isMobile) {
       this.animated.push((t) => this._writeUrchins(t));
@@ -493,6 +533,7 @@ export class LegacyColony {
     // Published so the fauna census can count it. Without this the creature
     // existed and drew, but was invisible to any count of the colony.
     this.copepods = n;
+    this._record("copepods", "discussionsClosed", "closed discussions", n);
   }
 
   /**
@@ -582,6 +623,7 @@ export class LegacyColony {
     crinoid.rotation.y = th;
     this.group.add(crinoid);
     this.featherStar = crinoid;
+    this._record("featherStar", "releases", "releases", arms);
 
     this.animated.push((t) => {
       // Arms unfurl and sweep — a crinoid is a passive suspension feeder, so
@@ -647,6 +689,7 @@ export class LegacyColony {
 
     // Published so the fauna census can count it (see buildCopepods).
     this.amphipods = n;
+    this._record("amphipods", "downloads", "downloads", n);
   }
 
   /**
@@ -685,6 +728,7 @@ export class LegacyColony {
     ring.instanceMatrix.needsUpdate = true;
     this.group.add(ring);
     this.barnacleRing = ring;
+    this._record("barnacleRing", "hasHomepage", "homepage", ring.count);
   }
 
   /** Sponge ← hasWiki. A permanently attached filter feeder on the stipe. */
@@ -711,6 +755,7 @@ export class LegacyColony {
     sponge.rotation.x = Math.sin(th) * 0.25;
     this.group.add(sponge);
     this.sponge = sponge;
+    this._record("sponge", "hasWiki", "wiki", 1);
   }
 
   // -------------------------------------------------------------------------
@@ -757,6 +802,7 @@ export class LegacyColony {
     fish.position.set(r, y, 0);
     this.group.add(fish);
     this.parrotfish = fish;
+    this._record("parrotfish", "hasChangelog", "changelog", 1);
 
     this.animated.push((t) => {
       // Grazing circuit: slow, with a scrape at the stipe and a turn away
@@ -802,6 +848,7 @@ export class LegacyColony {
     horse.rotation.y = -th;
     this.group.add(horse);
     this.seahorse = horse;
+    this._record("seahorse", "preRelease", "pre-release", 1);
 
     this.animated.push((t) => {
       // Hovers in place with a tiny bob — it is anchored, not swimming
@@ -852,6 +899,7 @@ export class LegacyColony {
     fish.rotation.y = -a0;
     this.group.add(fish);
     this.grouper = fish;
+    this._record("grouper", "branchCount", "branch count", b);
 
     this.animated.push((t) => {
       // Ambush: barely moves. A slow drift with occasional darts.
@@ -884,6 +932,7 @@ export class LegacyColony {
     }
     this.group.add(fish);
     this.cleanerWrasse = fish;
+    this._record("cleanerWrasse", "hasContributing", "contributing guide", n);
 
     this.animated.push((t) => {
       for (const m of members) {
@@ -952,6 +1001,7 @@ export class LegacyColony {
     // Counted by the fauna census, which asks how many of each creature a repo
     // grew rather than what meshes it is made of.
     this.coralPolyp = new Array(n).fill(0);
+    this._record("coralPolyp", "hasProjects", "project boards", n);
   }
 
   /**
@@ -1010,6 +1060,7 @@ export class LegacyColony {
     write(0);
     this.animated.push(write);
     this.lanternfish = lamps;
+    this._record("lanternfish", "hasDownloadsEnabled", "downloads enabled", n);
   }
 
   /** Nudibranch ← pullRequestTemplate. Slow, brilliant, crawls the blades. */
@@ -1081,6 +1132,7 @@ export class LegacyColony {
     this.group.add(bodyMesh, rhMesh);
     this.animated.push(write);
     this.nudibranch = slugs;
+    this._record("nudibranch", "hasPRTemplate", "PR template", n);
   }
 
   /**
@@ -1144,6 +1196,7 @@ export class LegacyColony {
     shark.position.set(0, this.yAt(0.75), -this.G * 9);
     this.group.add(shark);
     this.baskingShark = shark;
+    this._record("baskingShark", "readmeLength", "README length", 1);
 
     this.animated.push((t) => {
       // A slow figure-eight behind the tower. Big animal, slow passage.
@@ -1204,6 +1257,7 @@ export class LegacyColony {
     fish.rotation.y = -th;
     this.group.add(fish);
     this.anglerfish = fish;
+    this._record("anglerfish", "securityScanning", "security scanning", 1);
 
     this.animated.push((t) => {
       const pulse = Math.sin(t * 1.1) * 0.5 + 0.5;

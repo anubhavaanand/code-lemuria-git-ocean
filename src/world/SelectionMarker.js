@@ -182,6 +182,11 @@ export class SelectionMarker {
       if (o.geometry) o.geometry.dispose();
       if (o.material) o.material.dispose();
     });
-    if (this.group.parent) this.group.parent.removeChild(this.group);
+    // `Object3D.remove`, not `removeChild`. `removeChild` is a DOM method and
+    // does not exist on a Three.js group, so this line threw
+    // "this.group.parent.removeChild is not a function" inside the dispose path
+    // — which in StrictMode runs on the first mount's teardown and took the
+    // whole app down with it, leaving an empty canvas and a valid-looking DOM.
+    if (this.group.parent) this.group.parent.remove(this.group);
   }
 }

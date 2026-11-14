@@ -418,6 +418,7 @@ export class OceanWorld {
         });
         tower.group.add(legacy.group);
         entry.legacy = legacy;
+        entry.fauna = legacy.creatures;
         this.legacy.push(legacy);
       }
 
@@ -696,7 +697,14 @@ export class OceanWorld {
       this.focusOrbitY = entry.whaleOrbit ? entry.whaleOrbit.y : entry.tower.height * 0.58;
     }
 
-    this.onSelect(entry.repo);
+    // Attach the built fauna so the HUD's creature list describes the colony
+    // that exists, not the eighteen that could exist. The registry is the
+    // builders' own record, so it cannot disagree with the geometry.
+    this.onSelect(
+      entry.fauna
+        ? Object.assign({}, entry.repo, { __fauna: entry.fauna })
+        : entry.repo
+    );
   }
 
   /** Frame the currently selected repo at a given zoom level. */

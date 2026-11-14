@@ -262,6 +262,27 @@ function RepoCard({ repo, onClose, onFocus }) {
           <p className="go-hint">
             Every creature is a mapped data point. Nothing is decorative.
           </p>
+
+          {/* What actually built for this repo, straight from the colony's own
+              registry. The list below is the full mapping — the catalogue — but
+              a user looking at one tower needs to know which of these are in
+              front of them, and until now nothing said. */}
+          {(repo.__fauna || []).length > 0 && (
+            <div className="go-present">
+              <span className="go-present-label">
+                On this tower ({repo.__fauna.length})
+              </span>
+              <div className="go-present-list">
+                {repo.__fauna.map((f) => (
+                  <span className="go-present-chip" key={f.name}>
+                    {f.name}
+                    {f.count > 1 && <em>×{f.count}</em>}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           <ul>
             <li><b>Whale body length</b> — codebase size ({fmt(repo.codebaseSize)} KB)</li>
             <li><b>Dorsal colour</b> — dominant language ({repo.language})</li>
