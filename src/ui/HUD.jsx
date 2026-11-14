@@ -561,6 +561,7 @@ export default function HUD({
     const id = setInterval(sync, 120);
     return () => clearInterval(id);
   }, [world]);
+
   const [identity, setIdentity] = useState(null);
   const [stats, setStats] = useState(null);
 
@@ -572,15 +573,42 @@ export default function HUD({
 
   useEffect(() => {
     const onKey = (e) => {
+      // Typing in a field must not trigger world shortcuts. There are no inputs
+      // yet, but a shortcut that steals keystrokes from a future search box is a
+      // bug that only shows up later and looks unrelated.
+      const el = e.target;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) {
+        return;
+      }
+
       if (e.key === "Escape") {
         setLegendOpen(false);
         onClearSelection && onClearSelection();
       }
       if (e.key === "l" || e.key === "L") setLegendOpen((v) => !v);
+
+      // Step the camera one level at a time with the arrow keys. The number
+      // keys jump to an absolute level; arrows move relative to where you are,
+      // which is the difference between a menu and a walk.
+      const at = levels.findIndex((l) => l.id === activeLevelId);
+      // `findIndex` returns -1 for a level id that is not in the list, and -1 + 1
+      // is 0 — an arrow-down from an unknown level would jump to the top instead
+      // of stepping. Treat unknown as "at the nearest level" rather than as zero.
+      const from = at < 0 ? 0 : at;
+      if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+        if (from >= levels.length - 1) return;
+        e.preventDefault();
+        onLevelChange && onLevelChange(from + 1);
+      }
+      if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+        if (from <= 0) return;
+        e.preventDefault();
+        onLevelChange && onLevelChange(from - 1);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClearSelection]);
+  }, [onClearSelection, onLevelChange, activeLevelId, levels]);
 
   return (
     <div className="go-hud">
