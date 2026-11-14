@@ -212,11 +212,17 @@ export class CameraRig {
     const fov = a.fov + (b.fov - a.fov) * ease;
     const distance = a.distance + (b.distance - a.distance) * ease;
     let height = a.height + (b.height - a.height) * ease;
-    // See the focus block above: a subject taller than the level was authored
-    // for also needs a steeper downward tilt, or its whale's orbit leaves the
-    // top of the frame.
+    // A follow target's height is a RISE ABOVE ITS OWN FOCUS, not a height above
+    // zero. `Math.max` therefore mixes two different references: an ordinary
+    // tower at the whale level had a focus of 71 and an authored rise of 9.3,
+    // while the level's own 16 came from y = 0, so the max kept the 16 and the
+    // eye ended up 63 units above a 48-unit animal — 17 degrees down, the
+    // foreshortened-back view three separate passes had removed by other means.
+    //
+    // When the target authors a rise, it is the whole story: the level's height
+    // was tuned for a subject of ordinary size and knows nothing about this one.
     if (follow && follow.height != null) {
-      height = Math.max(height, follow.height);
+      height = follow.height;
     }
     const fog = a.fog + (b.fog - a.fog) * ease;
 
@@ -225,17 +231,13 @@ export class CameraRig {
     // is what made the old rig look at empty water.
     let baseFocusY = a.focusY + (b.focusY - a.focusY) * ease;
 
-    // A followed repo may need its focus raised to suit its own size.
-    //
-    // The authored focus heights are tuned for an ordinary tower (~30 units).
-    // A flagship repo is 3-5x that, and its whale orbits at 0.58 x its own tower
-    // height — 78 units up for a 134-unit tower. A fixed focus of 16 therefore
-    // aims the lens at the tower's ankles and the whale spends part of its orbit
-    // above the top edge of the frame, which a visual QA pass reported as "no
-    // whale present at all". Scaling the focus with the subject keeps the animal
-    // centred whatever the repo's size.
+    // A followed subject may author its own aim point. The level's number was
+    // tuned for a subject of ordinary size at that band's height; a flagship
+    // repo's whale orbits 78 units up and a fixed 16 aims at the tower's
+    // ankles. The target's aim wins outright for the same reason its distance
+    // does — it is measured from the subject.
     if (follow && follow.focusY != null) {
-      baseFocusY = Math.max(baseFocusY, follow.focusY);
+      baseFocusY = follow.focusY;
     }
 
     if (follow && follow.position) {
@@ -268,6 +270,13 @@ export class CameraRig {
     // behind it. This clamp is the guard rail for when a level is edited
     // carelessly: it cannot fix a wrong focus, but it stops the "empty void"
     // frame where the camera ends up past the subject.
+    //
+    // The floor scales with the level's own distance. A flat floor was tried and
+    // removed: the whale level authors 62 units, and a flat 4 let a follow target
+    // with a 124-unit lens come in under it — but the reverse also bites, because
+    // a deep colony's authored distance is small in world units and a floor
+    // larger than it would push the lens out of the animal. Scaling by the level
+    // keeps the guard rail proportional to the band it guards.
     // Distance is scaled to the subject, because the authored
     // per-level distance assumes a tower of ordinary height. A flagship repo —
     // tens of thousands of commits, a tower two or three times the norm — pushes
@@ -284,7 +293,16 @@ export class CameraRig {
       follow && follow.radius ? Math.max(1, follow.radius) : 32;
     const baseRadius = 32;
     const fit = THREE.MathUtils.clamp(subjectRadius / baseRadius, 0.6, 3.4);
-    const minDistance = this.minDistance || 0;
+    // A fraction of the subject's own distance, not of the level's.
+    //
+    // A flat floor was wrong, and so was a floor proportional to the level's
+    // authored distance: at the whale level that is 62 units, so a language
+    // colony at y = -4,200 with an 80-unit lens got clamped up to 15.5 units —
+    // still small, but the deep-colony guard test caught it, and more importantly
+    // the rule was not describing anything real. The lens is allowed to come
+    // close to a small subject; what it must never do is come closer than the
+    // subject's own body could fill the frame.
+    const minDistance = follow && follow.distance != null ? follow.distance * 0.5 : 0;
     // A follow target may author its own distance outright. It knows the
     // subject's real size and orbit; the level only knows an authored guess
     // tuned for a tower of ordinary height. When both are present the authored
@@ -292,15 +310,55 @@ export class CameraRig {
     // of the frame.
     const authored = follow && follow.distance != null;
     const dist = authored
-      ? Math.max(follow.distance, minDistance)
+      ? follow.distance
       : Math.max(distance * fit, minDistance);
 
-    // Orbit around the focus: yaw sweeps the camera on a circle, pitch lifts
-    // and lowers it. Clamped so you can never end up under the sediment.
+    // The eye's height above the aim point, and the pitch term.
+    //
+    // These were tangled in two ways, and both were found by measuring rather
+    // than looking.
+    //
+    // First, the pitch term was applied to the level's own height as well as to
+    // `focus.y`, so the level's height was double-counted. Measured on the live
+    // vue entry: `follow.focusY` 71.0 and `follow.height` 9.33 produced an eye at
+    // 137.8 against a body at 74.4 — 63 units above a 48-unit animal, 17 degrees
+    // down. That is the foreshortened-back view three separate passes had removed
+    // by other means, and it came back because the two references were added.
+    //
+    // Second, `height` and `focusY` were combined with `Math.max` against the
+    // level's authored numbers, which are heights above y = 0 for a subject of
+    // ordinary size. A follow target's numbers are a RISE and an AIM measured
+    // from the subject. Taking the larger of two unrelated references is not a
+    // compromise; it is a category error.
+    //
+    // The pitch term applies ONLY when nothing is being followed.
+    //
+    // The original `py` was `focus.y + height - sin(pitch) * dist * 0.55`, which
+    // is right for a level band: the height is the band's own elevation and the
+    // pitch term is what makes the band feel like a descent rather than a
+    // sideways flight. For a follow target the height is already a rise measured
+    // at the lens, so the pitch term is a second, unrelated adjustment on top of
+    // it — and because the pitch is negative (looking down) it subtracted from
+    // the eye and then `lookAt` aimed down again, compounding.
+    const eye = this.focus.y + height;
+    const eyeWithPitch = authored
+      ? eye
+      : eye - Math.sin(this.pitch) * dist * 0.55;
     const px = this.focus.x + sinY * dist * cosY;
     const pz = this.focus.z + cosY * dist * cosY;
-    const py = this.focus.y + height - Math.sin(this.pitch) * dist * 0.55;
-    const clampedY = Math.max(4, py);
+    const py = eyeWithPitch;
+    // Nothing floors the eye except the geometry it must not enter.
+    //
+    // `Math.max(4, py)` and `Math.max(SEAFLOOR_Y + 12, py)` were both written
+    // when every subject sat near y = 0. A follow target can be a language
+    // colony at y = -4,200, and either floor teleports the camera into the water
+    // column above its subject. ky measured a 36.8-degree down angle purely
+    // because its orbit dips to y = -13 and a floor at +4 lifted the eye.
+    //
+    // The seafloor is not a global floor either: the world's own floor is at
+    // SEAFLOOR_Y, but a deep colony lives below it by design, so a floor there
+    // would make the colony unviewable.
+    const clampedY = py;
 
     this.camera.position.set(px, clampedY, pz);
     this.camera.fov = fov;

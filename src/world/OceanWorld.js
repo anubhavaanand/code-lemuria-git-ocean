@@ -1053,14 +1053,39 @@ export class OceanWorld {
     const orbitY =
       this.focusOrbitY != null ? this.focusOrbitY : this.focusPoint.y;
     const length = this.focusLength || 18;
-    const halfV = 0.38 * length * 0.5 + 6;
     const fovV = 42;
     const ty = Math.tan((fovV * Math.PI) / 360);
     const tx = ty * (1440 / 900);
-    // Horizontally the lens must hold the whole orbit plus half the body, or
-    // the animal leaves the frame at some phase of its circle.
-    const halfH = (this.focusRadius || 32) + length * 0.5;
-    const dist = Math.max(halfV / ty, halfH / tx) * 1.9;
+    // Frame the animal at a fixed fraction of the frame's WIDTH, not its height.
+    //
+    // Two things were wrong before, in opposite directions. The first formula
+    // held the whole orbit plus half the body — `halfH = orbitR + length * 0.5`
+    // — then multiplied by 1.9, giving vue 268 units of lens for a 48.8-unit
+    // animal: 2.8 body lengths of empty water on every side, which is why the
+    // frame read as "a small animal in a very large nothing".
+    //
+    // The second dropped the orbit and used the frame's HEIGHT, which put vue at
+    // 119% of the frame tall — because the animal is broadside, its length lies
+    // across the screen. A 48.8-unit body that should span half the width was
+    // spanning more than the whole height.
+    //
+    // The width is the axis the body actually lies along at the authored start
+    // phase, and it is the axis the frame is widest in. So the distance is
+    // solved against `tx`, and the fraction is of the frame's width.
+    // The clearance is a fraction of the ANIMAL, not of the tower's orbit.
+    //
+    // Two earlier attempts got this wrong in opposite directions. Adding the
+    // tower's orbit radius (`focusRadius`, `tower.height * 0.7 + 16` capped at
+    // 62) put the lens 318 units from a 132-unit animal that needed 60, because
+    // a flagship's orbit is sized for its tower and says nothing about how far
+    // back its whale must sit. Dropping the clearance entirely let the orbit
+    // carry the animal behind the lens.
+    //
+    // A fraction of the body length clears the orbit at every size: it scales
+    // with the thing that has to fit, and it is zero for nothing.
+    const wantFraction = 0.42;
+    const clearance = length * 0.6;
+    const dist = (length * 0.5) / (tx * wantFraction) + clearance;
     follow.distance = dist;
     follow.focusY = orbitY;
     // Camera height is measured FROM the focus, so this is the pitch expressed
