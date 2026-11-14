@@ -441,6 +441,64 @@ function Legend({ open, onClose }) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Explore readout                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What this colony built, while you are looking at it.
+ *
+ * The repo card only exists once a tower is selected, and at the whale zoom the
+ * card covers most of the animal you flew in to see. This is the same
+ * information in a single line, at the edge: how many creatures are on this
+ * tower and what they are, so the world can be read without opening anything.
+ *
+ * Reads `world.selectedFauna` directly rather than going through React state:
+ * the selection already flows into the card, and duplicating it here would mean
+ * two copies of the same fact that can disagree.
+ */
+function ExploreReadout({ world }) {
+  const [fauna, setFauna] = useState(null);
+
+  useEffect(() => {
+    if (!world) return;
+    const sync = () => setFauna(world.selectedFauna ? [...world.selectedFauna] : null);
+    sync();
+    const id = setInterval(sync, 400);
+    return () => clearInterval(id);
+  }, [world]);
+
+  if (!fauna || fauna.length === 0) return null;
+
+  const total = fauna.reduce((s, f) => s + (f.count || 1), 0);
+  return (
+    <div className="go-readout" role="status" aria-live="polite">
+      <span className="go-readout-label">This colony</span>
+      <span className="go-readout-body">
+        {fauna.length} creature types · {total} animals
+      </span>
+      <span className="go-readout-list">
+        {fauna
+          .slice()
+          .sort((a, b) => (b.count || 1) - (a.count || 1))
+          .slice(0, 4)
+          .map((f) => {
+            const c = codexEntry(f.name);
+            return (
+              <span className="go-readout-chip" key={f.name} title={c.meaning}>
+                {c.label}
+                {f.count > 1 && <em>×{f.count}</em>}
+              </span>
+            );
+          })}
+        {fauna.length > 4 && (
+          <span className="go-readout-chip is-more">+{fauna.length - 4}</span>
+        )}
+      </span>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Root HUD                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -628,6 +686,12 @@ export default function HUD({
         activeId={activeLevelId}
         onPick={(i) => onLevelChange(i)}
       />
+
+      {/* Exploration readout. Names what is actually on screen instead of only
+          what the district holds — a user at the whale zoom looking at one
+          animal has no way to know what else the colony built without going
+          back out and reading the card. */}
+      <ExploreReadout world={world} />
 
       <Legend open={legendOpen} onClose={() => setLegendOpen(false)} />
 
