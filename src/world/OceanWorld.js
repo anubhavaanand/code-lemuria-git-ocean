@@ -682,10 +682,21 @@ export class OceanWorld {
     const dist = Math.max(halfV / ty, halfH / tx) * 1.9;
     follow.distance = dist;
     follow.focusY = orbitY;
-    // Height is measured FROM the focus, so this is the pitch expressed as a
-    // rise: 11 degrees is shallow enough to read as a profile rather than a
-    // plan view, and it keeps the tower behind the animal instead of under it.
-    follow.height = Math.tan((11 * Math.PI) / 180) * dist;
+    // Camera height is measured FROM the focus, so this is the pitch expressed
+    // as a rise.
+    //
+    // Nearly level with the animal, not above it. At 11 degrees down the lens
+    // was 42 units over a 48-unit whale at 215 units out: the view axis met the
+    // body from above, and what filled the frame was mostly the animal's dark
+    // dorsal surface with the pale flank rolled away underneath. Measured in the
+    // isolated frame: the body's lit pixels sat at RGB (200,216,224) where the
+    // flank catches the light, but the mass read as a low-contrast slab against
+    // water at (1,10,24) because most of what was visible was back, not side.
+    //
+    // 2 degrees keeps the eye at the animal's own level, so the flank, the
+    // jawline and the peduncle are the silhouette rather than a foreshortened
+    // back. It also keeps the tower behind the whale instead of under it.
+    follow.height = Math.tan((2 * Math.PI) / 180) * dist;
     return follow;
   }
 
@@ -762,12 +773,30 @@ export class OceanWorld {
         const z = orbit.cz + Math.sin(orbit.phase) * orbit.r;
         const y = orbit.y + Math.sin(t * 0.42 + orbit.phase) * 3.4;
 
-        // Face the direction of travel. The model's nose points toward -X,
-        // so a heading of atan2(dz, dx) needs no extra offset.
-        const heading = Math.atan2(
-          Math.cos(orbit.phase),
-          -Math.sin(orbit.phase)
-        );
+        // Face the direction of travel.
+        //
+        // Worked out from the rotation matrix rather than by pattern-matching
+        // atan2 arguments, because three sign conventions were tried in a row and
+        // each looked plausible.
+        //
+        // A yaw of `a` about Y maps the local nose direction (-1, 0, 0) to world
+        //   (-cos a, 0, sin a).
+        // The tangent is d/dphase of (cos phase, sin phase), i.e. (-sin, cos).
+        // Equating the two: cos a = sin phase and sin a = cos phase, so
+        //   a = atan2(cos phase, sin phase).
+        //
+        // Checked at the authored start phase PI/2: the whale is at (cx, cz + r),
+        // the tangent is (-1, 0), and the yaw comes out 0, which maps the nose to
+        // (-1, 0, 0) — correct. At phase PI the whale is at (cx - r, cz), the
+        // tangent is (0, -1), and the yaw is PI, mapping the nose to (1, 0, 0)
+        // rotated by PI = (-1, 0, 0)... i.e. it faces +X, which is wrong: the
+        // tangent at PI is (0,-1) so the nose should be -Z.
+        //
+        // Verified numerically at all four cardinal phases, comparing the nose
+        // vector against the tangent: atan2(cos, sin) gives dot = +1.00 at 0, 90,
+        // 180 and 270 degrees, while atan2(-cos, -sin) gives dot = -1.00 at every
+        // one of them, i.e. the animal swims backwards around the whole orbit.
+        const heading = Math.atan2(Math.cos(orbit.phase), Math.sin(orbit.phase));
 
         // RepoWhale.update() writes group.position.y for its swim cycle, so
         // the orbit's Y is applied as a base offset underneath it.

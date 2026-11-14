@@ -588,6 +588,28 @@ export default function App() {
                     skinnedBox,
                   };
                 })(),
+                // The DEFORMED body bounds, in wrapper space, read from the same
+                // CPU skinning the pivot correction uses — not a Box3, which on
+                // a SkinnedMesh reports the bind pose and on this rig the bind
+                // pose splayed the animal 2.4x wider than the GPU draws it.
+                //
+                // This exists because `rect` (a projected Box3) and the pixels
+                // disagreed for six passes: rect said w=15132 h=8908 behind:true
+                // while the body was plainly elsewhere. Anything derived from a
+                // Box3 on this asset is a bind-pose number and must not be used
+                // to aim a camera or judge a silhouette.
+                deformedBounds: (() => {
+                  if (!w.sculpt) return null;
+                  const inner = w.sculpt.children && w.sculpt.children[0];
+                  if (!inner) return null;
+                  const r = w.sculpt.userData.recentre;
+                  return r
+                    ? {
+                        lo: r.lo.map((v) => Number(v.toFixed(2))),
+                        hi: r.hi.map((v) => Number(v.toFixed(2))),
+                      }
+                    : null;
+                })(),
                 drawCalls: (() => {
                   // Renderer info is only meaningful right after a frame, so
                   // this is read from the last render rather than recomputed.

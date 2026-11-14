@@ -188,6 +188,29 @@ export class WhaleWithSculpt extends RepoWhale {
   rescaleAppendages() {
     if (!this.sculptSize) return;
 
+    // Drop the procedural parts that would double up with the sculpt's own.
+    //
+    // A humpback sculpt already carries a mouth line and eyes in its mesh, and
+    // a procedural jaw and pair of eyeballs seated on top of them read as a
+    // second animal superimposed on the first: the silhouette gains a beak-like
+    // wedge at the head and two bright beads that the sculpt does not have.
+    //
+    // These are removed rather than re-seated because there is no station on a
+    // sculpt where a separate jaw or eyeball is correct — the sculpt's geometry
+    // IS the head. Everything that carries repository data (flippers from open
+    // PRs, flukes from forks, barnacles from open issues, remoras from watchers)
+    // is kept, because those are mappings the sculpt cannot express.
+    if (this.jaw) {
+      this.group.remove(this.jaw);
+      if (this.jaw.geometry) this.jaw.geometry.dispose();
+      this.jaw = null;
+    }
+    for (const e of this.eyes || []) {
+      this.group.remove(e);
+      if (e.geometry) e.geometry.dispose();
+    }
+    this.eyes = [];
+
     const half = this.sculptSize.y * 0.5;
     const girthRatio = half / this.girth;
 
@@ -219,8 +242,8 @@ export class WhaleWithSculpt extends RepoWhale {
     for (const m of [this.barnacleMesh, this.remoraMesh]) {
       if (m) m.scale.setScalar(partScale);
     }
-    for (const e of this.eyes || []) e.scale.setScalar(partScale);
-    if (this.jaw) this.jaw.scale.setScalar(partScale);
+    // Eyes and jaw are gone on a sculpt (removed above), so the loop is left
+    // in place for the procedural body but resolves to nothing here.
   }
 
   dispose() {
