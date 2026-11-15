@@ -199,9 +199,55 @@ anything reading `girth` directly is wrong. Noted, not fixed.
 
 ### 4. Metro geometry
 
-Referenced in comments in `SonarObelisk.js` and `worldData.js`, but no tube
-geometry exists. Deliberately Phase 2: a city needs a map before it needs
-transit.
+**Status: geometry drawn. Riding it is still Phase 2.**
+
+The vision has described the metro since the first scaffolding commit — a
+pressure vessel, not a subway, magnetohydrodynamic tubes between stations — and
+until this pass it existed only as comments in `SonarObelisk.js` and
+`worldData.js`.
+
+Two things had to be built, and the first one was not the tubes.
+
+**The station lattice.** The six capitals were placed by
+`ox = cluster.lat * 0.6 - 90`, `oz = LAYERS.obelisk + (cluster.lon % 7) * 14`.
+Measured, that put x in `[-72.8, -58.5]` — fourteen units of lateral spread for
+an entire planet — and z in `[-387.9, -246.9]`. `lon % 7` takes a remainder, so
+-122.4 and 139.7 land in the same handful of values.
+
+That was survivable while an obelisk was only a landmark to look at, because a
+stack of them reads as a cluster. It stops being survivable the moment a tube
+has to run between two of them: every edge of the network shared almost the same
+midpoint, so the network would have been a knot. `stationPosition()` in
+`src/world/worldData.js` is an orthographic projection of real latitude and
+longitude onto a ring of radius 900, sized against the world-zoom frustum so all
+six stations are visible at once. A metro is only legible as a network when you
+can see all of it.
+
+A second defect came with it: `buildClusterLights` placed the cheap world-zoom
+beacons on its own arc (`a = (i/max)·2π + 0.4`, `r = 1600 + (i%3)·240`) while
+the obelisks sat in the 14 × 141 box — two different maps of the same six
+cities. The bright settlement you flew toward was not the obelisk you arrived at.
+
+**The tubes.** `metroCurve(a, b)` follows the terrain rather than cutting a
+chord, because the seafloor displaces up to 130 units along a single edge. The
+first version still surfaced through a trench: it smoothed absolute Y and placed
+the curve at the smoothed Y, so where the floor fell away the tube stayed high.
+Measured on delhi→sf, clearance went from -19.37 at t=0.30 to -0.08 at t=0.70.
+The fix smooths the *depth* and subtracts it from the local floor at each sample,
+which makes clearance exact by construction rather than lucky.
+
+Eight edges, each station connected to its two nearest neighbours. One neighbour
+would make a tree with unreachable leaves; all-pairs is fifteen edges for six
+stations, most crossing, which reads as a scribble. Every station is reachable
+in at most two hops.
+
+What is deliberately not built: riding the tubes. With one passenger (the
+camera) and no schedule it is a tunnel, not a metro. The vision puts the
+functional metro in Phase 2 with multiplayer.
+
+16 tests in `tests/metro.test.js`. `window.__GO.metro()` reports the ground
+truth — per-edge length, segment count, flow value, endpoints — because a buried
+tube cannot be checked against pixels the way a whale can.
 
 ### 5. Docs
 
