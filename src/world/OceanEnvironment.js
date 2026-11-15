@@ -387,14 +387,47 @@ export class OceanEnvironment {
 
   dispose() {
     this.scene.remove(this.group);
+
+    // Release each resource once.
+    //
+    // Every builder in this module creates its own geometry and material, adds
+    // the mesh to `this.group`, AND pushes both into `this.disposables`. So the
+    // teardown ran two passes over the same sixteen objects: the traverse found
+    // each one by walking the scene, and then the disposables loop found the
+    // same sixteen again. Measured on a live low-tier environment: 16 resources
+    // in the scene, 16 tracked, 32 dispose events.
+    //
+    // three swallows a double dispose — destroyGeometry removes the listener,
+    // deletes the map entry and decrements the counter, so the second call is a
+    // silent no-op rather than an exception. That is why it survived: nothing
+    // threw and no frame looked wrong. But it makes the dispose count
+    // meaningless as evidence, and the count is the only evidence a resource bug
+    // ever has.
+    //
+    // The traverse is the authority, because it is the thing that knows what is
+    // actually attached. A tracked object no longer in the graph would be a
+    // leaked handle rather than a second thing to free, so it is released too —
+    // the two sets are equal today and this keeps them equal if a builder ever
+    // forgets to add its mesh.
+    const disposed = new Set();
+    const free = (res) => {
+      if (!res || disposed.has(res)) return;
+      disposed.add(res);
+      res.dispose();
+    };
+
     this.group.traverse((o) => {
-      if (o.geometry) o.geometry.dispose();
+      if (o.geometry) free(o.geometry);
       if (o.material) {
-        if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
-        else o.material.dispose();
+        if (Array.isArray(o.material)) {
+          for (const m of o.material) free(m);
+        } else {
+          free(o.material);
+        }
       }
     });
-    this.disposables.forEach((d) => d.dispose && d.dispose());
+
+    for (const d of this.disposables) free(d);
   }
 }
 
