@@ -18,6 +18,7 @@
 import * as THREE from "three";
 import { COLORS, SEAFLOOR_Y } from "./constants";
 import { languageStyleColor } from "./constants";
+import { stationPosition } from "./worldData";
 
 export class SonarObelisk {
   /**
@@ -344,16 +345,24 @@ export class SonarObelisk {
  * A single obelisk is a landmark; the world zoom level needs the *lights* of
  * every capital, not the full geometry. This builds a cheap additive sprite
  * per cluster so the ocean floor reads as a map of hubs.
+ *
+ * The lights stand where the obelisks stand. They used to be placed on their
+ * own arc at radius 1,600-2,080 while the obelisks sat in a 14 x 141 box — two
+ * different maps of the same six cities, so the bright settlement you flew
+ * toward at world zoom was not the obelisk you arrived at. Both now come from
+ * stationPosition(), so the light is the landmark seen from far away.
  */
 export function buildClusterLights(clusters, opts = {}) {
   const group = new THREE.Group();
   group.name = "cluster-lights";
 
   const max = opts.max || clusters.length;
+  const at = opts.positionFor || stationPosition;
 
   for (let i = 0; i < Math.min(max, clusters.length); i++) {
     const c = clusters[i];
     const color = new THREE.Color(languageStyleColor(c.dominantLanguage));
+    const spot = at(c, opts);
 
     // A vertical beacon shaft — the far-away signature of a capital
     const shaftH = THREE.MathUtils.clamp(Math.log10((c.repos || 100) + 10) * 8, 6, 22);
@@ -368,10 +377,7 @@ export function buildClusterLights(clusters, opts = {}) {
     });
 
     const shaft = new THREE.Mesh(geo, mat);
-    // Clusters are spread across the far ocean floor on a wide arc
-    const a = (i / max) * Math.PI * 2 + 0.4;
-    const r = 1600 + (i % 3) * 240;
-    shaft.position.set(Math.cos(a) * r, SEAFLOOR_Y, Math.sin(a) * r - 300);
+    shaft.position.set(spot.x, SEAFLOOR_Y, spot.z);
     group.add(shaft);
 
     // A soft cap glow so it reads as a settlement, not a pole

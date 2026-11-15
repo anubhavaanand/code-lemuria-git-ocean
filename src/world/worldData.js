@@ -171,6 +171,110 @@ export const CAPITAL_CLUSTERS = [
 ];
 
 // ---------------------------------------------------------------------------
+// Station lattice — where a capital actually stands
+// ---------------------------------------------------------------------------
+
+/**
+ * The radius of the capital ring, in scene units.
+ *
+ * Chosen against the world-zoom camera, not against the map. World zoom parks
+ * the camera at (0, 700, 1450) looking at (0, 16, 0) with a 62 degree vertical
+ * fov and a 1.6 aspect, which gives a half-width of about 1,226 units at the
+ * ring's near edge and 1,761 at its far edge. A ring of 900 puts all six
+ * capitals inside that frustum with margin, which is the point: the world zoom
+ * has to be able to see the whole network at once, because a metro is only
+ * legible as a network when you can see all of its stations.
+ */
+export const STATION_RING_RADIUS = 900;
+
+/**
+ * Where a capital cluster stands in the world.
+ *
+ * This exists because the placement it replaced was wrong, and wrong in a way
+ * that only shows up once something has to connect two stations. The old
+ * formula was:
+ *
+ *     ox = cluster.lat * 0.6 - 90
+ *     oz = LAYERS.obelisk + (cluster.lon % 7) * 14
+ *
+ * `lat` spans 28.6 to 52.5, so `lat * 0.6 - 90` spans -72.8 to -58.5: fourteen
+ * units of lateral spread for an entire planet. `lon % 7` is worse — it takes
+ * the remainder of a longitude, so -122.4 and 139.7 both land in the same
+ * handful of values, and the six capitals ended up inside a box 14 wide and
+ * 141 deep. Six cities occupying the same few cubic units.
+ *
+ * That was invisible while an obelisk was just a landmark to look at. It stops
+ * being invisible the moment a tube has to run between two of them: every edge
+ * of the network had almost the same midpoint, so the "network" was a knot.
+ *
+ * The replacement is an orthographic projection of real latitude and longitude
+ * onto the seafloor, which is the honest way to lay out a map:
+ *
+ *     x = sin(lon) * cos(lat) * R
+ *     z = cos(lon) * cos(lat) * R
+ *
+ * `cos(lat)` is what keeps the high-latitude capitals from crowding the rim —
+ * without it, Berlin and Tokyo would sit further out than their real distance
+ * from the equator warrants. On this set it is the difference between a ring
+ * and a smear.
+ *
+ * The `z` offset pushes the whole ring behind the user's own zone, which sits
+ * at LAYERS.kelpForestMid. A capital in front of the viewer's own repositories
+ * would occlude the one part of the scene that is about them.
+ */
+export function stationPosition(cluster, opts = {}) {
+  const radius = opts.radius != null ? opts.radius : STATION_RING_RADIUS;
+  const zOffset = opts.zOffset != null ? opts.zOffset : -300;
+  const lat = (cluster.lat * Math.PI) / 180;
+  const lon = (cluster.lon * Math.PI) / 180;
+  const ring = Math.cos(lat) * radius;
+  return {
+    x: Math.sin(lon) * ring,
+    z: Math.cos(lon) * ring + zOffset,
+  };
+}
+
+/**
+ * The edges of the metro network: each station connected to its two nearest
+ * neighbours.
+ *
+ * Two, not one, and not all-pairs. One would make a tree with leaves nobody
+ * reaches without doubling back. All-pairs is fifteen edges for six stations,
+ * most of them crossing each other, which reads as a scribble rather than as a
+ * network and triples the tube geometry for no navigational gain. Two nearest
+ * neighbours is what a real network looks like: a ring with a few chords, every
+ * station reachable in at most two hops, and no edge that exists only to be
+ * looked at.
+ *
+ * Deduplicated on an unordered key, because A's nearest neighbour is usually B
+ * and B's nearest neighbour is usually A — without the key that single edge
+ * would be emitted twice and drawn twice.
+ */
+export function stationEdges(clusters, k = 2) {
+  const seen = new Set();
+  const edges = [];
+  for (let i = 0; i < clusters.length; i++) {
+    const a = stationPosition(clusters[i]);
+    const nearest = clusters
+      .map((c, j) => {
+        if (j === i) return null;
+        const b = stationPosition(c);
+        return { j, d: Math.hypot(a.x - b.x, a.z - b.z) };
+      })
+      .filter(Boolean)
+      .sort((p, q) => p.d - q.d)
+      .slice(0, k);
+    for (const { j } of nearest) {
+      const key = `${Math.min(i, j)}:${Math.max(i, j)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      edges.push([Math.min(i, j), Math.max(i, j)]);
+    }
+  }
+  return edges;
+}
+
+// ---------------------------------------------------------------------------
 // Language colonies — deep ocean, unlocated users
 // ---------------------------------------------------------------------------
 

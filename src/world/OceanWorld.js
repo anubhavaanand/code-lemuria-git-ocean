@@ -49,6 +49,7 @@ import {
   makeRng,
   LANGUAGE_COLONIES,
   YOU,
+  stationPosition,
 } from "./worldData";
 // The live-data seam: folding API records into a world that is already standing.
 // Kept out of this file because it is about *data*, not about the scene, and it
@@ -426,15 +427,22 @@ export class OceanWorld {
 
     // --- Capital landmarks: sonar obelisks ---
     // Only build the nearest few as full geometry; the rest become lights.
+    //
+    // Placed by stationPosition(), which is an orthographic projection of real
+    // latitude and longitude. The old formula compressed the whole planet into a
+    // 14 x 141 box, which was invisible while an obelisk was only a landmark to
+    // look at and fatal the moment a tube had to run between two of them: every
+    // edge of the network shared almost the same midpoint.
+    this.stations = [];
     for (const cluster of CAPITAL_CLUSTERS) {
+      const p = stationPosition(cluster);
+      this.stations.push({ ...cluster, x: p.x, z: p.z });
+
       const dz = Math.abs(depthToY(cluster.depth) - depthToY(this.you.depth));
       if (dz > 900 && !this.isMobile) continue;
 
       const obelisk = new SonarObelisk(cluster, opts);
-      // Stands on the sediment; X is spread by real longitude, Z by its band
-      const ox = cluster.lat * 0.6 - 90;
-      const oz = LAYERS.obelisk + (cluster.lon % 7) * 14;
-      obelisk.group.position.set(ox, seafloorHeightAt(ox, oz), oz);
+      obelisk.group.position.set(p.x, seafloorHeightAt(p.x, p.z), p.z);
       this.scene.add(obelisk.group);
       this.obelisks.push(obelisk);
     }
