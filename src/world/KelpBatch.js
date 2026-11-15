@@ -156,6 +156,52 @@ export class KelpBatch {
     this.meshes.push({ mesh, entries });
   }
 
+  /**
+   * Re-register one tower after its shape changed.
+   *
+   * A live record can change a tower's height, girth, ring count, CI status or
+   * worm count — and `smallFeatureKey` is derived from all five. So the key the
+   * tower was filed under when it was built is now wrong: its rings and tendrils
+   * are still posed in the buffer for the old silhouette, and it is missing from
+   * the buffer for its new one.
+   *
+   * Rebuilding the whole batch is the honest fix, and it is affordable: this runs
+   * once per live record, not once per frame, and a batch build is a matrix
+   * multiply per instance plus one buffer upload. Adding a `remove(tower)` that
+   * had to splice it out of every group and every entry array would be more code
+   * than the rebuild, and the splice is the part that is easy to get wrong.
+   *
+   * @returns {boolean} whether the tower was found and the batch rebuilt
+   */
+  refresh(tower) {
+    if (!tower) return false;
+
+    // Every tower currently filed, minus the one being refreshed, plus it again.
+    // Reading the tower list back out of the groups means a caller does not have
+    // to remember which towers exist — the batch already knows.
+    const all = [];
+    let found = false;
+    for (const g of this.groups.values()) {
+      for (const t of g.towers) {
+        if (t === tower) {
+          found = true;
+          continue;
+        }
+        if (!all.includes(t)) all.push(t);
+      }
+    }
+
+    // Not registered yet (or already dropped): nothing to rebuild from.
+    if (!found) return false;
+
+    all.push(tower);
+
+    this.dispose();
+    for (const t of all) this.add(t);
+    this.build();
+    return true;
+  }
+
   /** Re-pose every batch. Called from the world loop, after the towers move. */
   update() {
     const world = new THREE.Matrix4();

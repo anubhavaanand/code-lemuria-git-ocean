@@ -1428,6 +1428,86 @@ export class LegacyColony {
       }
     });
   }
+
+  /**
+   * Fold a live record into a colony that is already standing.
+   *
+   * The colony is frozen at construction by design: `this.H` and `this.G` are
+   * captured once and all eighteen builders place their animals relative to them.
+   * That was correct while the tower's numbers never changed. It stopped being
+   * correct the moment live data arrived, because a tower that grew from 26 to 62
+   * units left every creature standing at the old height — and a creature count
+   * derived from a field that the live record changed (open discussions, closed
+   * discussions, downloads, releases, branch count) was still the old count.
+   *
+   * Rebuilding is the only honest fix, and it is cheap: the colony is a few dozen
+   * small meshes, and this runs once per live record rather than per frame.
+   *
+   * The parent does NOT change. The group is already parented to the tower and
+   * the tower is not being replaced, so the colony keeps its place in the graph
+   * and only its contents are rebuilt.
+   *
+   * @returns {boolean} whether anything was rebuilt
+   */
+  applyRepo(repo, opts = {}) {
+    if (!repo) return false;
+    const tower = opts.tower || this.tower;
+
+    const before = {
+      repo: this.repo,
+      H: this.H,
+      G: this.G,
+      names: this.creatures.join(","),
+      tower,
+    };
+
+    this.repo = repo;
+    this.tower = tower;
+    // The same two expressions the constructor uses, re-read because the tower's
+    // geometry has already been rebuilt from the live numbers by the time this
+    // runs. Reading them from the tower rather than recomputing keeps the colony
+    // and the plant it clings to from disagreeing about how tall either is.
+    this.H = tower ? tower.height : 20;
+    this.G = tower ? tower.girth : 1.2;
+
+    if (
+      before.repo === repo &&
+      before.H === this.H &&
+      before.G === this.G &&
+      before.tower === tower
+    ) {
+      return false;
+    }
+
+    // Free the animals first. A rebuild that reused the old group would leave the
+    // previous generation of creatures parented to the tower and animating,
+    // which is a colony that doubles in population on every live update.
+    this.dispose();
+    this.group.clear();
+
+    // The RNG is reseeded, not continued. A colony's arrangement is a property of
+    // the repository's identity, and the whole point of seeding is that the same
+    // repository looks the same on every load — a second draw sequence would
+    // reshuffle the herd every time real data arrived.
+    this.rng = mulberry(hashString(repo.id || repo.name || "legacy"));
+    this.animated.length = 0;
+    // A NEW array, not the old one emptied. `registry` is read by the HUD's
+    // creature tab and by the fauna census, and both may still be holding the
+    // array they were handed — emptying it in place would change the contents of
+    // a list a consumer thinks describes the previous build, which is exactly the
+    // class of silent mutation that makes a card show one thing while the scene
+    // shows another.
+    this.registry = [];
+    this.roots.clear();
+    this.disposables.length = 0;
+
+    // Keep the phase offset. It is a random per-load value that only stops two
+    // colonies swaying in lockstep, and resetting it would make a rebuild visibly
+    // jump the animals that were mid-swim.
+    this.build();
+
+    return true;
+  }
 }
 
 export default LegacyColony;

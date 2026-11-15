@@ -556,6 +556,19 @@ export class OceanWorld {
       // is derived from the whale. Updating only the record would leave the
       // animal the old size while the HUD reported the new one.
       const entry = this.entries.get(repo.id);
+
+      // The tower is updated BEFORE the whale, because the orbit is derived from
+      // the tower's height. Doing it the other way round is what produced the
+      // measured drift: planetwood's whale grew from 8.10 to 19.20 units while its
+      // tower stayed at 26.31, so the animal ended up 2.6x too large for the plant
+      // it circles — the exact opposite of the proportionate rule in constants.js.
+      if (entry && entry.tower && typeof entry.tower.applyRepo === "function") {
+        const shape = entry.tower.applyRepo(repo);
+        if (shape && shape.changed) {
+          this._rederiveEntry(entry, repo);
+        }
+      }
+
       if (entry && entry.whale && typeof entry.whale.applyRepo === "function") {
         entry.whale.applyRepo(repo);
       }
@@ -580,6 +593,68 @@ export class OceanWorld {
 
     if (updated.length) this._refreshStats();
     return { updated, skipped };
+  }
+
+  /**
+   * Re-derive everything that depends on a tower's shape, after it changed.
+   *
+   * Four consumers read a tower's geometry at construction and would otherwise
+   * keep the value they captured:
+   *
+   *   1. `whaleOrbit` — radius is `min(height * 0.7 + 16, 62)` and height is
+   *      `root.y + height * 0.58`. The whale is rescaled by its own `applyRepo`
+   *      right after this runs, so an orbit that was not re-derived is a whale
+   *      the size of a bus circling at the radius of a bicycle.
+   *   2. `KelpBatch` — `smallFeatureKey` is built from girth, height, ring count,
+   *      CI status and worm count, so the key changed and the old buffer holds the
+   *      wrong silhouette.
+   *   3. `entry.legacy` — the colony captures `H` and `G` at construction.
+   *   4. `entry.fauna` — the registry's creature list is what the HUD shows, and
+   *      it changed with the live numbers.
+   *
+   * The marker and the camera are re-pointed too, because `select()` caches
+   * `focusPoint`, `focusRadius`, `focusLength` and `focusOrbitY` on the world and
+   * none of them is live.
+   */
+  _rederiveEntry(entry, repo) {
+    const orbit = entry.whaleOrbit;
+    if (orbit && entry.tower) {
+      orbit.r = Math.min(entry.tower.height * 0.7 + 16, 62);
+      orbit.y = entry.tower.group.position.y + entry.tower.height * 0.58;
+    }
+
+    // The batch has to be told before the colony, because the colony reads the
+    // tower's height and girth — not the batch's — but the batch is what the frame
+    // actually draws, so its buffer must already describe the new shape by the
+    // time anything is looked at.
+    if (this.kelpBatch) this.kelpBatch.refresh(entry.tower);
+
+    if (entry.legacy && typeof entry.legacy.applyRepo === "function") {
+      const rebuilt = entry.legacy.applyRepo(repo, { tower: entry.tower });
+      if (rebuilt) {
+        // The HUD holds the registry it was handed. Rebuild the list rather than
+        // mutating it, because the old entries describe creatures that no longer
+        // exist (a repo that gained open discussions grows a herd of urchins).
+        entry.fauna = entry.legacy.creatures;
+      }
+    }
+
+    // The selection is a snapshot. If this tower is the selected one, re-point the
+    // cached focus values so the camera frames the new size rather than the old.
+    if (this.selectedId === repo.id) {
+      const p = entry.tower.group.position;
+      this.focusPoint = { x: p.x, y: entry.tower.height * 0.42, z: p.z };
+      this.focusRadius = Math.min(entry.tower.height * 0.7 + 16, 62);
+      if (entry.whale) {
+        this.focusLength = entry.whale.length;
+        this.focusOrbitY = orbit ? orbit.y : entry.tower.height * 0.58;
+      }
+      if (this.marker && typeof this.marker.setSelected === "function") {
+        // The marker caches the tower's girth and height to size its rings and
+        // its pulse climb. Re-select so those are re-read from the new shape.
+        this.marker.setSelected(entry.tower);
+      }
+    }
   }
 
   /**
