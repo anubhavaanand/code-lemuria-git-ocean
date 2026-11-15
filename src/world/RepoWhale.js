@@ -563,6 +563,12 @@ export class RepoWhale {
     this._rq = new THREE.Quaternion();
     this._rs = new THREE.Vector3(1, 1, 1);
     this._rp = new THREE.Vector3();
+    // One Euler for the whole remora school. Allocating one per fish per frame
+    // is six arrays a second for a small school and sixty for a busy one, and
+    // every one of them is garbage the collector has to find again. The rig
+    // already keeps its Matrix4/Quaternion/Vector3 here for exactly this
+    // reason; the Euler was the one that got missed.
+    this._re = new THREE.Euler();
   }
 
   /** Local x of the nose. Lathe body: -length/2. */
@@ -718,7 +724,7 @@ export class RepoWhale {
           Math.cos(a) * bodyR * 1.05 + bodyY * 0.6,
           Math.sin(a) * bodyR * 1.25
         );
-        this._rq.setFromEuler(new THREE.Euler(0, -a + Math.PI / 2, Math.sin(t * 2 + r.phase) * 0.2));
+        this._rq.setFromEuler(this._re.set(0, -a + Math.PI / 2, Math.sin(t * 2 + r.phase) * 0.2));
         this._rm.compose(this._rp, this._rq, this._rs);
         this.remoraMesh.setMatrixAt(i, this._rm);
       }
