@@ -64,7 +64,7 @@ import {
 } from "./liveData";
 import { OceanEnvironment, createFog, depthBackground } from "./OceanEnvironment";
 import { Seafloor, seafloorHeightAt } from "./Seafloor";
-import { KelpTower } from "./KelpTower";
+import { KelpTower, disposeShared } from "./KelpTower";
 import { WhaleWithSculpt } from "./WhaleFactory";
 import { CreatureSystem, AmbientSchool } from "./CreatureGeometry";
 import { LegacyColony } from "./LegacyCreatures";
@@ -1535,6 +1535,19 @@ export class OceanWorld {
     if (this.marker) this.marker.dispose();
     if (this.ocean) this.ocean.dispose();
     if (this.floor) this.floor.dispose();
+
+    // Module-owned geometry, released once and at the end.
+    //
+    // Every tower and every batched mesh draws from the same three unit
+    // geometries in SHARED. A per-tower teardown must skip them, and the blanket
+    // traverse below must not reach them either — both are wrong for the same
+    // reason, and the traverse was the one that actually bit: it freed geometry
+    // the forest was still drawing from, 60 times over, without throwing, because
+    // three's dispose of an already-released buffer is a silent no-op.
+    //
+    // So the order here is the whole fix: dispose everything that owns a single
+    // object, then release what many objects own, then release the renderer.
+    disposeShared();
 
     this.scene.traverse((o) => {
       if (o.geometry) o.geometry.dispose();
