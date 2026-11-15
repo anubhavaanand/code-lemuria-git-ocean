@@ -29,7 +29,35 @@ import {
   languageStyleColor,
   WHALE_SPECIES,
 } from "./constants";
+import { makeRng, hashString } from "./worldData";
 import { whaleSkinVertex, whaleSkinFragment } from "./shaders";
+
+// ---------------------------------------------------------------------------
+// Deterministic per-repo jitter
+// ---------------------------------------------------------------------------
+
+/**
+ * The whale's incidental placements — where the barnacles settled, where the
+ * remoras ride — are seeded, not random.
+ *
+ * Each barnacle's position is read as a settlement pattern ("real barnacles are
+ * hitchhikers"), and each remora's station along the flank is read as where a
+ * watcher has latched on. Both are presented as properties of the animal, so
+ * both must be the same animal on every load. `Math.random()` reshuffles them,
+ * which turns a repo's identifiable skin into a fresh random crust each visit.
+ *
+ * Two separate streams, one for the shells and one for the passengers, so that
+ * the number of barnacles does not move the remoras — the same reasoning as the
+ * per-group seed in CreatureGeometry: a shared stream makes every later feature
+ * a function of what an earlier one consumed.
+ */
+function repoStreams(repo) {
+  const base = hashString(`${repo.owner || "?"}/${repo.name || "?"}`);
+  return {
+    barnacle: makeRng((base ^ 0x1b873593) >>> 0),
+    remora: makeRng((base ^ 0x27d4eb2f) >>> 0),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Build profile per species — proportion differences, not just colour.
@@ -129,6 +157,10 @@ export class RepoWhale {
 
     this.languageColor = languageStyleColor(repo.language);
     this.time = Math.random() * 100;
+
+    // Seeded per repo, consumed by buildBarnacles and buildRemoras in a fixed
+    // order. Created once here so the two builders cannot draw from each other.
+    this.rng = repoStreams(repo);
 
     this.group = new THREE.Group();
     this.group.name = `whale:${repo.owner}/${repo.name}`;
@@ -352,7 +384,15 @@ export class RepoWhale {
       );
       fin.rotation.set(side * 0.5, 0, side * -0.35);
       this.group.add(fin);
-      this.flippers.push({ mesh: fin, side, phase: Math.random() * Math.PI * 2 });
+      // The stroke phase is per repo, not per load. It is a gait offset — two
+      // flippers out of phase would flap asymmetrically — but it must still be
+      // the same gait on every visit, because the flipper stroke is part of how
+      // the animal is recognised at the whale zoom.
+      this.flippers.push({
+        mesh: fin,
+        side,
+        phase: this.rng.remora() * Math.PI * 2,
+      });
     }
   }
 
@@ -453,8 +493,10 @@ export class RepoWhale {
 
     for (let i = 0; i < count; i++) {
       // Barnacles cluster on the head and back — real settlement pattern
-      const t = Math.random() < 0.55 ? Math.random() * 0.3 : Math.random() * 0.85;
-      const a = Math.random() * Math.PI * 2;
+      const t = this.rng.barnacle() < 0.55
+        ? this.rng.barnacle() * 0.3
+        : this.rng.barnacle() * 0.85;
+      const a = this.rng.barnacle() * Math.PI * 2;
       // Seat on the skin. A sculpt's radius at a given fraction is not the lathe
       // sine, so this goes through surfaceRadius() like everything else.
       const bodyR = this.surfaceRadius(t);
@@ -502,9 +544,14 @@ export class RepoWhale {
     const p = new THREE.Vector3();
 
     for (let i = 0; i < count; i++) {
-      const t = 0.2 + Math.random() * 0.55;
-      const a = Math.random() * Math.PI * 2;
-      this.remoras.push({ t, a, phase: Math.random() * Math.PI * 2, speed: 0.6 + Math.random() * 0.7 });
+      const t = 0.2 + this.rng.remora() * 0.55;
+      const a = this.rng.remora() * Math.PI * 2;
+      this.remoras.push({
+        t,
+        a,
+        phase: this.rng.remora() * Math.PI * 2,
+        speed: 0.6 + this.rng.remora() * 0.7,
+      });
       p.set(0, 0, 0);
       m.compose(p, q, s);
       mesh.setMatrixAt(i, m);
