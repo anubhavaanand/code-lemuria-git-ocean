@@ -240,14 +240,26 @@ export class MetroNetwork {
         maxSeg
       );
 
-      // Name the tube after its two stations. Every mesh was named
-      // `metro:?-?` because the station records carry `cluster` but the
-      // obelisk's own id lives one level down — and a network of anonymous
-      // tubes is a network you cannot debug, because a census report cannot
-      // tell you which two cities an edge actually connects.
-      const idOf = (s) =>
-        (s && ((s.cluster && s.cluster.id) || s.id)) || "unknown";
+      // Name the tube after its two stations, and read each station's glow.
+      //
+      // Both used to go through a nested `cluster` lookup, on the assumption
+      // that a station record wraps the raw cluster. It does not: OceanWorld
+      // builds stations as a FLAT spread (`{ ...cluster, x, z }`), so
+      // `s.cluster` is undefined and both reads silently fell back to their
+      // defaults — every tube was named `metro:unknown-unknown`, and every
+      // tube got the same 0.6 activity, so the busiest line in the network
+      // glowed no brighter than the quietest. A fallback that fires on the
+      // one path that matters is worse than no fallback, because the render
+      // still looks correct.
+      const idOf = (s) => (s && (s.id || (s.cluster && s.cluster.id))) || "unknown";
+      const glowOf = (s) => {
+        if (!s) return 0.6;
+        if (typeof s.glow === "number") return s.glow;
+        if (s.cluster && typeof s.cluster.glow === "number") return s.cluster.glow;
+        return 0.6;
+      };
       const label = `${idOf(a)}-${idOf(b)}`;
+      const activity = glowOf(a) * 0.5 + glowOf(b) * 0.5;
 
       const geo = new THREE.TubeGeometry(
         curve,
@@ -272,8 +284,7 @@ export class MetroNetwork {
           uLength: { value: length },
           uOpacity: { value: this.quality === "low" ? 0.5 : 0.62 },
           uTime: { value: 0 },
-          uActivity: { value: ((a.cluster && a.cluster.glow) || 0.6) * 0.5 +
-                                  ((b.cluster && b.cluster.glow) || 0.6) * 0.5 },
+          uActivity: { value: activity },
         },
       });
 

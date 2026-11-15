@@ -155,7 +155,12 @@ describe("tube curve", () => {
 });
 
 describe("MetroNetwork", () => {
-  const stations = CAPITAL_CLUSTERS.map((c) => ({ ...stationPosition(c), cluster: c }));
+  // The FLAT shape: this is what OceanWorld actually hands the network. It
+  // used to be built as `{ ...stationPosition(c), cluster: c }`, which masked
+  // two real bugs — the tube names and the activity uniform both went through
+  // a nested `cluster` lookup and silently fell back to defaults, because the
+  // production stations are a flat spread with no nested cluster at all.
+  const stations = CAPITAL_CLUSTERS.map((c) => ({ ...stationPosition(c), ...c }));
   const edges = stationEdges(CAPITAL_CLUSTERS).map(([i, j]) => [stations[i], stations[j]]);
 
   it("builds one mesh per edge, all in one group", () => {
@@ -185,6 +190,52 @@ describe("MetroNetwork", () => {
     // The start offsets are not all the same.
     const starts = new Set(metro.tubes.map((t) => t.mesh.material.uniforms.uFlow.value.toFixed(3)));
     expect(starts.size).toBe(metro.tubes.length);
+  });
+
+  it("names every tube after both of its stations", () => {
+    // This asserted nothing before, because the fixture used the nested
+    // `{ cluster }` shape and every name came out `metro:delhi-beijing`-shaped
+    // by accident of the wrapper. Against the flat production shape every
+    // name silently became `metro:unknown-unknown` — a network of anonymous
+    // tubes, which is exactly the failure the naming exists to prevent.
+    const scene = new THREE.Scene();
+    const metro = new MetroNetwork(scene, { quality: "low" });
+    metro.build(stations, edges);
+    for (const t of metro.tubes) {
+      expect(t.mesh.name).toMatch(/^metro:(?!unknown)[a-z]+-(?!unknown)[a-z]+$/);
+    }
+    // Every station is named in at least one tube, so no city is anonymous.
+    const named = new Set();
+    for (const t of metro.tubes) {
+      for (const part of t.mesh.name.replace(/^metro:/, "").split("-")) named.add(part);
+    }
+    expect(named.size).toBe(stations.length);
+  });
+
+  it("scales activity by the two stations' glow, so the busy lines read brighter", () => {
+    // Both ends of the same edge contribute, so a tube between two bright
+    // capitals must be brighter than one between two quiet ones. This is the
+    // property that made the old code's 0.6 fallback invisible: every tube
+    // got the same value and the render still looked plausible.
+    const scene = new THREE.Scene();
+    const metro = new MetroNetwork(scene, { quality: "low" });
+    metro.build(stations, edges);
+    const acts = metro.tubes.map((t) => t.mesh.material.uniforms.uActivity.value);
+    for (const a of acts) {
+      expect(a).toBeGreaterThan(0.5);
+      expect(a).toBeLessThanOrEqual(1);
+    }
+    expect(new Set(acts.map((a) => a.toFixed(3))).size).toBe(metro.tubes.length);
+    // The loudest pair in the network is sf (1.0) with tokyo (0.81); the
+    // quietest is berlin (0.72) with london (0.68). Verify against the data
+    // rather than against a hand-computed number.
+    const byId = new Map(stations.map((s) => [s.id, s.glow]));
+    const expected = metro.tubes.map((t) => {
+      const [x, y] = t.mesh.name.replace(/^metro:/, "").split("-");
+      return byId.get(x) * 0.5 + byId.get(y) * 0.5;
+    });
+    expect(expected).toEqual(acts.map((a) => expect.closeTo(a, 3)));
+    expect(Math.max(...acts)).toBeGreaterThan(Math.min(...acts));
   });
 
   it("fewer segments on low quality", () => {
