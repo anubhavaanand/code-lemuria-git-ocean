@@ -240,3 +240,139 @@ describe("KelpBatch", () => {
     batch.dispose();
   });
 });
+
+/**
+ * The hand-out path, rebuilt.
+ *
+ * WHY THIS EXISTS
+ *
+ * A shape too small to share is handed back to its owning tower with
+ * `buildProp`, and `buildProp` APPENDS — it does not ask whether the tower
+ * already holds a mesh for that shape. A rebuild runs `build()` from scratch, so
+ * the same small group is handed out again and again.
+ *
+ * Nothing released the previous one: `dispose()` walked only the shared buffers,
+ * and the tower's own `_clearOwn` cannot see a mesh the batch created on its
+ * behalf. Measured, a tower gained one InstancedMesh per rebuild and never lost
+ * one — five rebuilds left it drawing six ring meshes where one was drawn, and the
+ * same growth under the tendrils it had handed back.
+ *
+ * The batch keeps a `handed` ledger now, so a rebuild can free the generation it
+ * is replacing. These tests pin the ledger's two invariants: it does not grow,
+ * and it does not drop a mesh that is still drawing.
+ */
+describe("the hand-out ledger", () => {
+  const lone = () => {
+    const scene = new THREE.Scene();
+    const batch = new KelpBatch(scene);
+    const tower = new KelpTower(repo(), { batchProps: true, quality: "low" });
+    tower.group.position.set(10, 0, 20);
+    tower.group.updateMatrixWorld(true);
+    batch.add(tower);
+    batch.build();
+    return { scene, batch, tower };
+  };
+
+  // Every InstancedMesh the tower is drawing, by shape.
+  const drawing = (tower) => {
+    const list = [];
+    tower.group.traverse((o) => {
+      if (o.isInstancedMesh) list.push(`${o.geometry.type}:${o.count}`);
+    });
+    return list.sort();
+  };
+
+  it("does not grow a tower's props when the batch is rebuilt", () => {
+    const { batch, tower } = lone();
+    const before = drawing(tower);
+    // The lone tower is the case this defect lives in: with nothing to share
+    // against, every one of its shapes is handed back rather than batched.
+    expect(batch.handed.length).toBeGreaterThan(0);
+
+    // Repeatedly, because asserting once would pass with a fix that only removes
+    // the last duplicate rather than the whole generation.
+    for (let i = 0; i < 4; i++) {
+      expect(batch.refresh(tower)).toBe(true);
+    }
+
+    expect(drawing(tower)).toEqual(before);
+    expect(batch.handed.length).toBe(1);
+  });
+
+  it("keeps the ledger in step with the meshes actually attached", () => {
+    const { batch, tower } = lone();
+
+    for (let i = 0; i < 4; i++) {
+      batch.refresh(tower);
+      // A ledger that drifted from the scene would either leak (entries pointing
+      // at released meshes) or fail to release (live meshes off the books), and
+      // neither shows up in a count of what the tower draws.
+      for (const { mesh } of batch.handed) {
+        expect(mesh.parent).toBe(tower.group);
+      }
+      // One hand-out per shape: rings and tendrils, two shapes, one mesh each.
+      const shapes = new Set(batch.handed.map(({ mesh }) => mesh.geometry.uuid));
+      expect(shapes.size).toBe(batch.handed.length);
+    }
+  });
+
+  it("releases the hand-outs on dispose", () => {
+    const { scene, batch, tower } = lone();
+    const handed = batch.handed.map(({ mesh }) => mesh);
+    expect(handed.length).toBeGreaterThan(0);
+
+    batch.dispose();
+
+    // The batch created them through `buildProp` and is the only thing that knows
+    // they exist, so the teardown is its to finish. Left behind, they keep
+    // drawing after the batch is gone and the tower's own teardown never reaches
+    // them.
+    expect(scene.children.length).toBe(0);
+    for (const mesh of handed) {
+      expect(mesh.parent).toBeNull();
+    }
+    expect(batch.handed.length).toBe(0);
+  });
+
+  it("leaves an untouched tower's props alone when another tower is refreshed", () => {
+    // The batch rebuilds as a whole, so a fix that only cleaned up the refreshed
+    // tower would still leak under the ones it did not touch.
+    const scene = new THREE.Scene();
+    const batch = new KelpBatch(scene);
+    const a = new KelpTower(repo(), { batchProps: true, quality: "low" });
+    const b = new KelpTower(
+      repo({ id: "o/r2", contributors: 3, totalCommits: 90, ageDays: 100, ciStatus: "none" }),
+      { batchProps: true, quality: "low" }
+    );
+    for (const t of [a, b]) {
+      t.group.position.set(10, 0, 20);
+      t.group.updateMatrixWorld(true);
+      batch.add(t);
+    }
+    batch.build();
+    expect(batch.handed.length).toBeGreaterThan(0);
+
+    const before = drawing(b);
+    for (let i = 0; i < 3; i++) {
+      batch.refresh(a);
+    }
+
+    expect(drawing(b)).toEqual(before);
+    expect(batch.handed.length).toBeGreaterThan(0);
+  });
+
+  it("keeps the shared geometry intact across rebuilds", () => {
+    const { batch, tower } = lone();
+    const before = {
+      ring: SHARED.ring.attributes.position.count,
+      tendril: SHARED.tendril.attributes.position.count,
+    };
+
+    for (let i = 0; i < 3; i++) batch.refresh(tower);
+
+    // The hand-outs draw with SHARED geometry, so a release that reached for it
+    // would break every tower in the world at once.
+    expect(SHARED.ring.attributes.position.count).toBe(before.ring);
+    expect(SHARED.tendril.attributes.position.count).toBe(before.tendril);
+  });
+});
