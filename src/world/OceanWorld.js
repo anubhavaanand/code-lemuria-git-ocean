@@ -50,6 +50,7 @@ import {
   LANGUAGE_COLONIES,
   YOU,
   stationPosition,
+  stationEdges,
 } from "./worldData";
 // The live-data seam: folding API records into a world that is already standing.
 // Kept out of this file because it is about *data*, not about the scene, and it
@@ -69,6 +70,7 @@ import { CreatureSystem, AmbientSchool } from "./CreatureGeometry";
 import { LegacyColony } from "./LegacyCreatures";
 import { KelpBatch } from "./KelpBatch";
 import { SonarObelisk, buildClusterLights } from "./SonarObelisk";
+import { MetroNetwork } from "./Metro";
 import { CameraRig } from "./CameraRig";
 import { SelectionMarker } from "./SelectionMarker";
 import { FrameProfiler, NOOP_PROFILER } from "./perf";
@@ -454,6 +456,28 @@ export class OceanWorld {
     lights.position.set(0, SEAFLOOR_Y, LAYERS.farRidge - 80);
     this.scene.add(lights);
     this.clusterLights = lights;
+
+    // --- The metro ---
+    //
+    // Tubes between stations, bored through the seabed. Built from the SAME
+    // station lattice the obelisks and the lights use, so the network a viewer
+    // traces on the map is the network that is actually there.
+    //
+    // Deliberately the last thing added: the tubes are the only element whose
+    // legibility depends on everything else being placed first. They are the
+    // connective tissue, and connective tissue that is built before the organs
+    // it connects tends to be built to the wrong coordinates.
+    if (!this.isMobile) {
+      this.metro = new MetroNetwork(this.scene, {
+        quality: this.quality,
+        isMobile: false,
+      });
+      const edgePairs = stationEdges(this.stations).map(([i, j]) => [
+        this.stations[i],
+        this.stations[j],
+      ]);
+      this.metro.build(this.stations, edgePairs);
+    }
 
     // --- Your own repos: the Phase 1 personal zone ---
     this._addRepoTowers(this.data.yourRepos, {
@@ -1379,6 +1403,12 @@ export class OceanWorld {
         this.obelisks[i].update(delta, t);
       }
 
+      // --- Metro ---
+      // The flow is advanced with the same frame clock as everything else, so
+      // a long frame does not make a pulse jump further than the wall clock
+      // actually moved.
+      if (this.metro) this.metro.update(delta, t);
+
       // --- Hover ---
       // Resolved once per frame, not per pointermove: pointermove fires far
       // more often than a frame and each raycast walks every pickable tower.
@@ -1501,6 +1531,7 @@ export class OceanWorld {
     for (const c of this.creatureSystems) c.system.dispose();
     for (const a of this.ambientSchools) a.dispose();
     for (const o of this.obelisks) o.dispose();
+    if (this.metro) this.metro.dispose();
     if (this.marker) this.marker.dispose();
     if (this.ocean) this.ocean.dispose();
     if (this.floor) this.floor.dispose();
