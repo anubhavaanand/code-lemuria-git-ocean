@@ -71,6 +71,7 @@ import { SonarObelisk, buildClusterLights } from "./SonarObelisk";
 import { CameraRig } from "./CameraRig";
 import { SelectionMarker } from "./SelectionMarker";
 import { FrameProfiler, NOOP_PROFILER } from "./perf";
+import { PerfGovernor, tierIndexFor } from "./adaptiveQuality";
 
 const isMobileDevice = () =>
   typeof navigator !== "undefined" &&
@@ -126,6 +127,27 @@ export class OceanWorld {
     // never consulted. The profiler exists so a performance claim can be
     // checked against a number.
     this.profiler = opts.profiler || NOOP_PROFILER;
+
+    // The other half of the profiler. It reads the frame interval the profiler
+    // measures and steps the render cost down when the machine cannot hold the
+    // budget. Built here rather than in `_initRenderer` because the constructor
+    // is what tests instantiate without a GPU, and `apply` only touches the
+    // renderer once a window has actually closed.
+    //
+    // Off by default: `opts.adaptiveQuality` is the opt-in. Headless captures
+    // run under SwiftShader at 2-4 fps, which would step to the floor before the
+    // first frame is drawn and make every capture compare low-tier against
+    // low-tier. A real tab opts in, and `?quality=high|medium|low` pins a tier.
+    // The starting tier comes from the explicit `?quality=` pin when there is
+    // one, and otherwise from the device the world just detected. Falling back
+    // to `this.quality` is the whole point of `tierIndexFor`: without it a phone
+    // detected as "mobile" would start on the high tier's 2x pixel ratio and
+    // wait two seconds to be corrected — the exact inversion the mapping exists
+    // to prevent.
+    this.governor = opts.adaptiveQuality ? new PerfGovernor({
+      startIndex: tierIndexFor(opts.qualityTier ?? this.quality) ?? 0,
+      apply: (tier, index) => this._applyQualityTier(tier, index),
+    }) : null;
 
     this.towers = [];          // { tower, repo, entry }
     this.whales = [];          // { whale, entry, orbit }
@@ -184,6 +206,12 @@ export class OceanWorld {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.shadowMap.enabled = this.quality !== "low";
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    // The governor's first tier is applied after the renderer exists, so the
+    // device's initial quality is expressed the same way as every later change.
+    // Without this, a phone would start on the "high" tier's numbers regardless
+    // of what `tierIndexFor` decided.
+    if (this.governor) this._applyQualityTier(this.governor.tier, this.governor.index, true);
 
     // Record which renderer actually got the context. A perf number measured
     // under a software rasteriser (which is what headless Chrome uses) says
@@ -258,6 +286,12 @@ export class OceanWorld {
     this.scene.add(sun.target);
     this.sun = sun;
 
+    // The shadow-casting flag is authored from `this.quality`, which the
+    // governor can move out from under this method. `shadowQualityApplied`
+    // remembers what the renderer was last told, so a tier change that does not
+    // touch shadows does not rebuild the map for nothing.
+    this.shadowQualityApplied = this.quality !== "low";
+
     // Cold bounce from the seafloor — the ground reflects, it isn't a void
     const bounce = new THREE.DirectionalLight(0x3d84b0, 0.7);
     bounce.position.set(90, -260, -140);
@@ -273,6 +307,56 @@ export class OceanWorld {
     const fill = new THREE.DirectionalLight(0x6fa8c8, 0.42);
     fill.position.set(60, 140, 520);
     this.scene.add(fill);
+  }
+
+  /**
+   * Apply one of the governor's tiers to the renderer.
+   *
+   * `initial` skips the shadow rebuild: on the first call the shadow map has not
+   * been allocated, so disposing it would free nothing.
+   *
+   * The pixel ratio is a CAP, never a value to force. A 1x display must not be
+   * asked to draw at 2x just because the governor thinks the machine is capable
+   * — `devicePixelRatio` is what the renderer already reads, and this only ever
+   * lowers the ceiling.
+   */
+  _applyQualityTier(tier, index, initial = false) {
+    if (!this.renderer) return;
+
+    // The pixel ratio is a CAP, never a value to force. `devicePixelRatio` is
+    // what the renderer already reads; this only ever lowers the ceiling. That
+    // matters in the test and headless environments, where the ratio is 1 — a
+    // "high" tier of 2 is then a no-op rather than a request to draw at 2x.
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, tier.pixelRatio));
+
+    // Shadows are the expensive half of this tier and the only part that cannot
+    // be changed by reassigning a number. `renderer.shadowMap.enabled` gates
+    // whether the map is rendered at all; `sun.castShadow` gates whether the
+    // lights are in the shadow-casting list; the material recompile is what
+    // stops the shaders from sampling a map that is no longer being written.
+    //
+    // `initial` skips the work when nothing has changed — on the first call the
+    // constructor has just set both flags from the scene quality, and disposing
+    // a shadow map that was never allocated would be disposing nothing.
+    const want = tier.shadows && this.quality !== "low";
+    if (!initial && want !== this.shadowQualityApplied) {
+      this.renderer.shadowMap.enabled = want;
+      if (this.sun) {
+        this.sun.castShadow = want;
+        if (this.sun.shadow && this.sun.shadow.map) {
+          this.sun.shadow.map.dispose();
+          this.sun.shadow.map = null;
+        }
+      }
+      this.scene.traverse((o) => {
+        const m = o.material;
+        if (!m) return;
+        for (const mm of Array.isArray(m) ? m : [m]) mm.needsUpdate = true;
+      });
+      this.shadowQualityApplied = want;
+    }
+
+    this.qualityTier = { ...tier, index };
   }
 
   _buildEnvironment() {
@@ -1368,6 +1452,12 @@ export class OceanWorld {
           lines: info.render.lines,
         });
       }
+
+      // The governor runs last, on the interval between this frame and the
+      // previous one. Running it after the render is the point: a tier change
+      // takes effect on the next frame, never mid-frame, so a window's decision
+      // can never be applied to the frame it was measured from.
+      if (this.governor) this.governor.sample();
     };
 
     tick();
