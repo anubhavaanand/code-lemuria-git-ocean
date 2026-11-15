@@ -564,6 +564,10 @@ export class LegacyColony {
     const q = new THREE.Quaternion();
     const p = new THREE.Vector3();
     const s = new THREE.Vector3(1, 1, 1);
+    // One Euler for the whole herd, mutated in place. Allocating one per bug per
+    // frame is 60 arrays a second on a small colony and 1,500 on a busy one, and
+    // the animation loop runs for as long as the colony is on screen.
+    const e = new THREE.Euler();
 
     const bugs = [];
     for (let i = 0; i < n; i++) {
@@ -593,7 +597,7 @@ export class LegacyColony {
           b.y0 + Math.sin(t * 0.9 + b.bob) * this.G * 0.35,
           Math.sin(th) * b.rad
         );
-        q.setFromEuler(new THREE.Euler(0, -th, Math.sin(t * 2 + b.bob) * 0.3));
+        q.setFromEuler(e.set(0, -th, Math.sin(t * 2 + b.bob) * 0.3));
         m.compose(p, q, s.set(b.sc, b.sc, b.sc));
         mesh.setMatrixAt(i, m);
       }
@@ -732,6 +736,9 @@ export class LegacyColony {
     const q = new THREE.Quaternion();
     const p = new THREE.Vector3();
     const s = new THREE.Vector3();
+    // Same reasoning as the copepods above: one Euler for the herd, mutated in
+    // place, instead of one per amphipod per frame.
+    const e = new THREE.Euler();
 
     const bugs = [];
     for (let i = 0; i < n; i++) {
@@ -752,7 +759,7 @@ export class LegacyColony {
         // Scuttle in and out of the holdfast — they are always moving
         const rr = b.r + Math.sin(t * 1.6 + b.ph) * this.G * 0.35;
         p.set(Math.cos(th) * rr, b.y + Math.abs(Math.sin(t * 2.2 + b.ph)) * this.G * 0.12, Math.sin(th) * rr);
-        q.setFromEuler(new THREE.Euler(0, -th + Math.PI / 2, Math.sin(t * 3 + b.ph) * 0.25));
+        q.setFromEuler(e.set(0, -th + Math.PI / 2, Math.sin(t * 3 + b.ph) * 0.25));
         m.compose(p, q, s.setScalar(b.sc));
         mesh.setMatrixAt(i, m);
       }
