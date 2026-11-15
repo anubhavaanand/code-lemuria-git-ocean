@@ -14,6 +14,52 @@ import { COLORS, ORBITAL_PLANES, LAYERS } from "./constants";
 import { biolumVertex, biolumFragment } from "./shaders";
 
 // ---------------------------------------------------------------------------
+// Deterministic per-repo jitter
+// ---------------------------------------------------------------------------
+
+/**
+ * A seeded RNG, so one repository's creatures are the same on every load.
+ *
+ * Every group is built from `Math.random()` in `build()`, which means a repo's
+ * population reshuffles on each visit: the same 26 Builders arrive at a
+ * different phase, radius, speed and tint, and the whole system shears from a
+ * different starting point. That defeats three things at once — a screenshot
+ * cannot be diffed against a second run, a repo cannot acquire a visual
+ * signature, and any future "creature count per repo" readout cannot be
+ * verified against the pixels.
+ *
+ * Seeded per repo AND per group, not per repo alone. A shared stream across
+ * all five groups would make the populations correlated: the group built
+ * second would be a function of what the first consumed, so adding a creature
+ * to one group would move all the others. Salting the seed per group name
+ * keeps each population independent while leaving both fully reproducible.
+ */
+function mulberry(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function hashString(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function repoSeed(repo, groupName) {
+  return (hashString(`${repo.id || repo.owner || "?"}/${repo.name || "?"}`) ^
+    hashString(groupName)) >>> 0;
+}
+
+// ---------------------------------------------------------------------------
 // Per-group palette and behaviour
 // ---------------------------------------------------------------------------
 
@@ -75,6 +121,10 @@ export class OrbitalGroup {
     this.count = this.computeCount();
     this.instances = [];
 
+    // Seeded per repo and per group, so the population is reproducible without
+    // the groups sharing a stream.
+    this.rng = mulberry(repoSeed(repo, groupName));
+
     this.group = new THREE.Group();
     this.group.name = `orbital-${groupName}`;
     this.build();
@@ -134,24 +184,24 @@ export class OrbitalGroup {
 
     for (let i = 0; i < count; i++) {
       // Even angular distribution with jitter so they don't look gridded
-      phases[i] = (i / count) * Math.PI * 2 + Math.random() * 0.4;
+      phases[i] = (i / count) * Math.PI * 2 + this.rng() * 0.4;
 
       // Radius varies inside the plane — a band, not a single ring
-      radii[i] = this.plane.radius * (0.78 + Math.random() * 0.34);
+      radii[i] = this.plane.radius * (0.78 + this.rng() * 0.34);
 
       // Slight speed spread within the group, so it shears over time
-      speeds[i] = 0.82 + Math.random() * 0.42;
+      speeds[i] = 0.82 + this.rng() * 0.42;
 
       // Vertical spread gives the group volume
       const spread = this.plane.inclination * this.plane.radius * 0.6 + 1.1;
-      yOffsets[i] = (Math.random() - 0.5) * spread;
+      yOffsets[i] = (this.rng() - 0.5) * spread;
 
       // Size distribution: many small, a few large
-      const sr = Math.random();
+      const sr = this.rng();
       sizes[i] = style.size[0] + (style.size[1] - style.size[0]) * (sr > 0.86 ? 1 : sr * 0.7);
 
       // Tint varies per individual — real populations aren't uniform
-      tmp.copy(cA).lerp(cB, Math.random() * 0.55);
+      tmp.copy(cA).lerp(cB, this.rng() * 0.55);
       tints[i * 3] = tmp.r;
       tints[i * 3 + 1] = tmp.g;
       tints[i * 3 + 2] = tmp.b;
