@@ -248,7 +248,21 @@ export class WhaleWithSculpt extends RepoWhale {
     }
     for (const e of this.eyes || []) {
       this.group.remove(e);
-      if (e.geometry) e.geometry.dispose();
+      // The two eyes were built from ONE geometry and ONE material, and the
+      // loop is a `for` over both of them, so a naive `e.geometry.dispose()`
+      // here fires the same dispose twice. three swallows it, but the whole
+      // point of releasing a part at the moment it is dropped is that the
+      // release is real; a double one makes the count meaningless. Nulling the
+      // field also means a later `dispose()` cannot reach the freed object
+      // through the detached mesh.
+      if (e.geometry) {
+        e.geometry.dispose();
+        e.geometry = null;
+      }
+      if (e.material) {
+        e.material.dispose();
+        e.material = null;
+      }
     }
     this.eyes = [];
 
