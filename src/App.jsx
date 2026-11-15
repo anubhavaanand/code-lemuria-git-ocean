@@ -87,6 +87,29 @@ export default function App() {
         profiler: new FrameProfiler(
           new URLSearchParams(window.location.search).get("debug") === "perf"
         ),
+        // The governor is off in a headless capture and on in a real tab.
+        //
+        // SwiftShader renders this scene at 2-4 fps, which is not a slow
+        // machine — it is a machine with no GPU at all. A governor that acted on
+        // it would step to the floor before the first frame was drawn, and then
+        // every capture in this project would be comparing low-tier against
+        // low-tier while believing it was looking at the default tier. That is
+        // the same category of mistake as the profiler: `?debug=perf` is a
+        // measurement, not a behaviour.
+        //
+        // `?quality=high|medium|low` pins a tier by hand, which is what a user
+        // on a machine the detector misjudges needs.
+        // `?quality=high|medium|low` pins a tier by hand, which is what a user
+        // on a machine the detector misjudges needs. It is a RENDERER setting,
+        // so it drives the governor's starting index rather than `this.quality`
+        // — that field decides how many towers, rocks and creatures get built,
+        // and rebuilding the whole scene for a tier change would be a different
+        // and far more expensive feature.
+        adaptiveQuality: new URLSearchParams(window.location.search).get("quality")
+          ? false
+          : !/HeadlessChrome|swiftshader/i.test(navigator.userAgent),
+        qualityTier:
+          new URLSearchParams(window.location.search).get("quality") || undefined,
       });
     } catch (e) {
       console.error("[GitOcean] failed to start world", e);
@@ -365,6 +388,26 @@ export default function App() {
             el ? el.clientWidth : 1440,
             el ? el.clientHeight : 900
           );
+        },
+        // What the governor has done, and to what. `force(index)` pins a tier
+        // without touching `this.quality`, so the scene's object counts stay
+        // where they were and only the renderer changes — which is the whole
+        // point of the tier being a renderer setting.
+        quality: (index) => {
+          if (!instance.governor) return { enabled: false };
+          if (typeof index === "number") {
+            instance.governor.index = Math.max(
+              0,
+              Math.min(index, 3 - 1)
+            );
+            instance._applyQualityTier(instance.governor.tier, instance.governor.index);
+          }
+          return {
+            enabled: true,
+            ...instance.governor.report(),
+            pixelRatio: instance.renderer.getPixelRatio(),
+            shadowMap: instance.renderer.shadowMap.enabled,
+          };
         },
       };
     }
@@ -824,6 +867,15 @@ export default function App() {
           // rasterisation and a real GPU differ by an order of magnitude, and
           // only one of them is the user's experience.
           payload.renderer = instance.rendererName || "unknown";
+          // The governor's state, when it is running. Reporting it under the
+          // same switch as the profiler is what makes "is this slow?" a single
+          // answerable question: the interval, the renderer behind it, and what
+          // the scene did about it.
+          if (instance.governor) {
+            payload.quality = instance.governor.report();
+            payload.pixelRatio = instance.renderer.getPixelRatio();
+            payload.shadowMap = instance.renderer.shadowMap.enabled;
+          }
           // What the renderer actually drew, for the same frame.
           payload.render = {
             calls: instance.renderer.info.render.calls,
