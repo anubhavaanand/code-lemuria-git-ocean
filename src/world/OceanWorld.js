@@ -49,6 +49,8 @@ import {
   makeRng,
   LANGUAGE_COLONIES,
   YOU,
+  stationPosition,
+  stationEdges,
 } from "./worldData";
 // The live-data seam: folding API records into a world that is already standing.
 // Kept out of this file because it is about *data*, not about the scene, and it
@@ -68,6 +70,7 @@ import { CreatureSystem, AmbientSchool } from "./CreatureGeometry";
 import { LegacyColony } from "./LegacyCreatures";
 import { KelpBatch } from "./KelpBatch";
 import { SonarObelisk, buildClusterLights } from "./SonarObelisk";
+import { MetroNetwork } from "./Metro";
 import { CameraRig } from "./CameraRig";
 import { SelectionMarker } from "./SelectionMarker";
 import { FrameProfiler, NOOP_PROFILER } from "./perf";
@@ -426,15 +429,22 @@ export class OceanWorld {
 
     // --- Capital landmarks: sonar obelisks ---
     // Only build the nearest few as full geometry; the rest become lights.
+    //
+    // Placed by stationPosition(), which is an orthographic projection of real
+    // latitude and longitude. The old formula compressed the whole planet into a
+    // 14 x 141 box, which was invisible while an obelisk was only a landmark to
+    // look at and fatal the moment a tube had to run between two of them: every
+    // edge of the network shared almost the same midpoint.
+    this.stations = [];
     for (const cluster of CAPITAL_CLUSTERS) {
+      const p = stationPosition(cluster);
+      this.stations.push({ ...cluster, x: p.x, z: p.z });
+
       const dz = Math.abs(depthToY(cluster.depth) - depthToY(this.you.depth));
       if (dz > 900 && !this.isMobile) continue;
 
       const obelisk = new SonarObelisk(cluster, opts);
-      // Stands on the sediment; X is spread by real longitude, Z by its band
-      const ox = cluster.lat * 0.6 - 90;
-      const oz = LAYERS.obelisk + (cluster.lon % 7) * 14;
-      obelisk.group.position.set(ox, seafloorHeightAt(ox, oz), oz);
+      obelisk.group.position.set(p.x, seafloorHeightAt(p.x, p.z), p.z);
       this.scene.add(obelisk.group);
       this.obelisks.push(obelisk);
     }
@@ -446,6 +456,28 @@ export class OceanWorld {
     lights.position.set(0, SEAFLOOR_Y, LAYERS.farRidge - 80);
     this.scene.add(lights);
     this.clusterLights = lights;
+
+    // --- The metro ---
+    //
+    // Tubes between stations, bored through the seabed. Built from the SAME
+    // station lattice the obelisks and the lights use, so the network a viewer
+    // traces on the map is the network that is actually there.
+    //
+    // Deliberately the last thing added: the tubes are the only element whose
+    // legibility depends on everything else being placed first. They are the
+    // connective tissue, and connective tissue that is built before the organs
+    // it connects tends to be built to the wrong coordinates.
+    if (!this.isMobile) {
+      this.metro = new MetroNetwork(this.scene, {
+        quality: this.quality,
+        isMobile: false,
+      });
+      const edgePairs = stationEdges(this.stations).map(([i, j]) => [
+        this.stations[i],
+        this.stations[j],
+      ]);
+      this.metro.build(this.stations, edgePairs);
+    }
 
     // --- Your own repos: the Phase 1 personal zone ---
     this._addRepoTowers(this.data.yourRepos, {
@@ -1371,6 +1403,12 @@ export class OceanWorld {
         this.obelisks[i].update(delta, t);
       }
 
+      // --- Metro ---
+      // The flow is advanced with the same frame clock as everything else, so
+      // a long frame does not make a pulse jump further than the wall clock
+      // actually moved.
+      if (this.metro) this.metro.update(delta, t);
+
       // --- Hover ---
       // Resolved once per frame, not per pointermove: pointermove fires far
       // more often than a frame and each raycast walks every pickable tower.
@@ -1493,6 +1531,7 @@ export class OceanWorld {
     for (const c of this.creatureSystems) c.system.dispose();
     for (const a of this.ambientSchools) a.dispose();
     for (const o of this.obelisks) o.dispose();
+    if (this.metro) this.metro.dispose();
     if (this.marker) this.marker.dispose();
     if (this.ocean) this.ocean.dispose();
     if (this.floor) this.floor.dispose();

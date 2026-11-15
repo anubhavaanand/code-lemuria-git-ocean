@@ -409,6 +409,34 @@ export default function App() {
             shadowMap: instance.renderer.shadowMap.enabled,
           };
         },
+        // Ground-truth metro state. A tube is buried, so a "the network is
+        // missing" report cannot be checked against pixels the way a whale can
+        // — this reports the geometry instead: how many tubes, where they run,
+        // how deep, and what the flow uniforms are doing right now.
+        metro: () => {
+          if (!instance.metro) return { built: false };
+          return {
+            built: true,
+            tubes: instance.metro.tubes.length,
+            stations: instance.stations ? instance.stations.length : 0,
+            sample: instance.metro.tubes.slice(0, 8).map((t) => ({
+              name: t.mesh.name,
+              length: Number(t.length.toFixed(1)),
+              segments: t.mesh.geometry.attributes.position.count,
+              flow: Number(t.mesh.material.uniforms.uFlow.value.toFixed(2)),
+              start: [
+                Number(t.curve.getPoint(0).x.toFixed(1)),
+                Number(t.curve.getPoint(0).y.toFixed(1)),
+                Number(t.curve.getPoint(0).z.toFixed(1)),
+              ],
+              mid: [
+                Number(t.curve.getPoint(0.5).x.toFixed(1)),
+                Number(t.curve.getPoint(0.5).y.toFixed(1)),
+                Number(t.curve.getPoint(0.5).z.toFixed(1)),
+              ],
+            })),
+          };
+        },
       };
     }
 
