@@ -201,7 +201,25 @@ export class KelpTower {
     // batch owns one buffer and one draw call for every tower.
     this.batchProps = opts.batchProps === true;
 
+    // Every object this tower adds to its own group, in build order.
+    //
+    // This exists because the group is not exclusively the tower's: the legacy
+    // colony parents itself to it so it inherits the tower's transform for free.
+    // A teardown that walked `group.children` would therefore free the colony's
+    // animals along with the tower's kelp, and a rebuild would leave the colony
+    // pointing at disposed geometry. Explicit ownership is the same lesson the
+    // dispose pass taught: a list of what you made beats a guess about what is
+    // attached.
+    this._own = [];
+
     this.build();
+  }
+
+  /** Add one of this tower's own props, and remember that it is ours. */
+  _addOwn(obj) {
+    this._own.push(obj);
+    this.group.add(obj);
+    return obj;
   }
 
   build() {
@@ -229,7 +247,7 @@ export class KelpTower {
     this.holdfast = new THREE.Mesh(geo, mat);
     // Girth maps to how many people have touched the repo
     this.holdfast.scale.set(this.girth * 1.5, this.girth * 0.55, this.girth * 1.5);
-    this.group.add(this.holdfast);
+    this._addOwn(this.holdfast);
 
     // Root tendrils spreading across the sediment — more contributors, more spread.
     //
@@ -270,7 +288,7 @@ export class KelpTower {
       const tendrils = new THREE.InstancedMesh(SHARED.tendril, tMat, tendrilCount);
       for (let i = 0; i < tendrilCount; i++) tendrils.setMatrixAt(i, matrices[i]);
       tendrils.instanceMatrix.needsUpdate = true;
-      this.group.add(tendrils);
+      this._addOwn(tendrils);
     }
   }
 
@@ -322,7 +340,7 @@ export class KelpTower {
     });
 
     this.stipe = new THREE.Mesh(geo, mat);
-    this.group.add(this.stipe);
+    this._addOwn(this.stipe);
   }
 
   // -------------------------------------------------------------------------
@@ -395,7 +413,7 @@ export class KelpTower {
     this._bp = new THREE.Vector3();
     this._be = new THREE.Euler();
 
-    this.group.add(mesh);
+    this._addOwn(mesh);
   }
 
   // -------------------------------------------------------------------------
@@ -441,7 +459,7 @@ export class KelpTower {
     this.polyps.mesh = mesh;
     this._pm = new THREE.Matrix4();
     this._ps = new THREE.Vector3();
-    this.group.add(mesh);
+    this._addOwn(mesh);
   }
 
   // -------------------------------------------------------------------------
@@ -487,7 +505,7 @@ export class KelpTower {
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingSphere();
     this.ringMesh = mesh;
-    this.group.add(mesh);
+    this._addOwn(mesh);
   }
 
   // -------------------------------------------------------------------------
@@ -515,7 +533,7 @@ export class KelpTower {
     const r = this.girth * (2.4 + strength * 4.5);
     this.starGlow.scale.setScalar(r);
     this.starGlow.position.y = this.height * 0.86;
-    this.group.add(this.starGlow);
+    this._addOwn(this.starGlow);
 
     this.starGlowBase = 1;
   }
@@ -573,7 +591,7 @@ export class KelpTower {
     const mesh = new THREE.InstancedMesh(SHARED.worm, mat, count);
     for (let i = 0; i < count; i++) mesh.setMatrixAt(i, matrices[i]);
     mesh.instanceMatrix.needsUpdate = true;
-    this.group.add(mesh);
+    this._addOwn(mesh);
     this.tubeWorms = mesh;
   }
 
@@ -686,7 +704,7 @@ export class KelpTower {
     }
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingSphere();
-    this.group.add(mesh);
+    this._addOwn(mesh);
     if (kind === "ring") this.ringMesh = mesh;
     return mesh;
   }
@@ -710,6 +728,163 @@ export class KelpTower {
     if (this._disposed) return;
     this._disposed = true;
 
-    disposeSubtree(this.group);
+    // Only the tower's own props. The group is not exclusively ours: the legacy
+    // colony parents itself to it so it inherits the tower's transform, and a
+    // blanket traverse would free the colony's animals from under it. The world's
+    // teardown still disposes the colony separately, through its own entry.
+    this._clearOwn();
+    this._own.length = 0;
+  }
+
+  /**
+   * Free this tower's own props, detach them, and forget them.
+   *
+   * Used by two callers that want the same narrow thing: a rebuild that is about
+   * to build replacements, and a teardown that is done for good. Both must stop
+   * short of the things that are not the tower's — the legacy colony's animals
+   * and anything else a third party parented to this group.
+   *
+   * Only what `_own` lists is touched. `disposeSubtree` is deliberately not used
+   * here, because it walks the whole group and would take the colony with it.
+   */
+  _clearOwn() {
+    for (const obj of this._own) {
+      // Geometry: skip the module-owned units, which every tower and the batch
+      // still reference. `isSharedGeometry` is the same test the teardown uses.
+      if (obj.geometry && !isSharedGeometry(obj.geometry)) obj.geometry.dispose();
+      // Material: a tower builds its own material for every part it owns, so
+      // there is nothing shared to protect on this side.
+      if (obj.material) {
+        if (Array.isArray(obj.material)) {
+          for (const m of obj.material) m.dispose();
+        } else {
+          obj.material.dispose();
+        }
+      }
+      // InstancedMesh also owns its instance buffer, which is separate from the
+      // geometry and the material. `InstancedMesh.dispose()` frees that and
+      // nothing else, which is exactly the half a plain `dispose()` on the
+      // geometry would leave behind.
+      if (obj.isInstancedMesh && typeof obj.dispose === "function") obj.dispose();
+      this.group.remove(obj);
+    }
+
+    // The per-part handles point at objects that are now detached and freed.
+    // Leaving them would make a second rebuild write matrices into a released
+    // buffer, which is the kind of bug that only shows up on the second live
+    // update of a session.
+    this.holdfast = null;
+    this.stipe = null;
+    this.stipeUniforms = null;
+    this.starGlow = null;
+    this.ringMesh = null;
+    this.tubeWorms = null;
+    this.blades = [];
+    this.polyps = [];
+    this.bladeMesh = null;
+    if (this.polyps) this.polyps.mesh = null;
+    this.tendrilMatrices = null;
+    this.ringMatrices = null;
+    this._wormPhases = null;
+  }
+
+  /**
+   * Put the RNG streams back where they started.
+   *
+   * Both streams are seeded from the repository's identity, and both are consumed
+   * in a fixed order by the builders. Advancing one and rebuilding therefore
+   * draws a *different* arrangement, not the same one — which breaks the guarantee
+   * the seeding exists for.
+   *
+   * This matters only for a rebuild, which is why it is a separate method rather
+   * than something the constructor does: a tower is built exactly once, so the
+   * constructor's streams are already at the top. A rebuild is the second and
+   * later time the same draws happen.
+   */
+  _resetRng() {
+    this.rng = seeded(seedOf(this.repo));
+    this.shapeRng = seeded((seedOf(this.repo) ^ 0x9e3779b9) >>> 0);
+  }
+
+  /**
+   * Fold a live record into a tower that is already standing.
+   *
+   * The defect this closes: `adoptProfile` updates the repo record, rescales the
+   * whale from it, and never told the tower anything — so the animal changed size
+   * while the plant it circles stayed the shape it was drawn with on first paint.
+   * Measured on a live profile: planetwood went from 312 to 2,400 commits, the
+   * whale grew from 8.10 to 19.20 units, and the tower was still 26.31 tall. The
+   * documented invariant in constants.js is that a whale's length is derived from
+   * the *same* quantity as the tower's height so the two stay proportionate; the
+   * ratio was meant to be 0.28 x the species' lengthMul and measured 0.7297,
+   * i.e. the animal was 2.6x too big for its own plant.
+   *
+   * What is deliberately NOT re-derived: `group.position`, `group.scale`, `repo.id`,
+   * `repo.position`, `repo.depth`. Those are identity — the world does not move
+   * under a user who is looking at it. Everything that is *shape* is re-derived.
+   *
+   * Returns a report rather than a boolean, because the caller has three things
+   * to do that live here and nowhere else: re-derive the whale's orbit (which is
+   * a function of tower height), re-register the tower with the batch (whose
+   * `smallFeatureKey` includes girth, height, ring count and CI status, so the
+   * old key is now wrong), and rebuild the legacy colony (which captures height
+   * and girth at construction and would otherwise stay frozen at the old ones).
+   *
+   * @returns {{changed: boolean, height: number, girth: number, rings: number, sway: number}}
+   */
+  applyRepo(repo) {
+    if (!repo) return { changed: false };
+
+    const before = {
+      height: this.height,
+      girth: this.girth,
+      sway: this.sway,
+      rings: this.rings,
+      language: this.languageColor,
+      ci: this.repo ? this.repo.ciStatus : null,
+      stars: this.repo ? this.repo.stars : 0,
+      contributors: this.repo ? this.repo.contributors : 0,
+    };
+
+    this.repo = repo;
+
+    // The same five numbers the constructor derives, from the same functions, in
+    // the same order. Duplicating the formulas here would be a second place for
+    // them to drift, so this is a call to the identical expressions.
+    this.height = towerHeight(repo);
+    this.girth = towerGirth(repo);
+    this.sway = THREE.MathUtils.clamp((repo.commitFrequency || 0) / 30, 0.02, 1);
+    this.rings = ringCount(repo.ageDays);
+    this.languageColor = languageStyleColor(repo.language);
+
+    const changed =
+      this.height !== before.height ||
+      this.girth !== before.girth ||
+      this.sway !== before.sway ||
+      this.rings !== before.rings ||
+      this.languageColor !== before.language ||
+      (repo.ciStatus || "none") !== (before.ci || "none") ||
+      (repo.stars || 0) !== before.stars ||
+      (repo.contributors || 0) !== before.contributors;
+
+    if (!changed) return { changed: false, height: this.height, girth: this.girth, rings: this.rings, sway: this.sway };
+
+    // Free the old props before building new ones. The RNG streams go back to the
+    // top first: the arrangement is a property of the repository's identity, so a
+    // rebuild must reproduce it, not continue drawing from a stream that has
+    // already been spent once. What legitimately changes is how many props there
+    // are and how big, which is exactly what the record changed.
+    this._clearOwn();
+    this._own.length = 0;
+    this._resetRng();
+    this.build();
+
+    return {
+      changed: true,
+      height: this.height,
+      girth: this.girth,
+      rings: this.rings,
+      sway: this.sway,
+    };
   }
 }
