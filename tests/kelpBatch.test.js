@@ -68,6 +68,55 @@ describe("tower prop batching", () => {
     );
   });
 
+  // That test only covers the tendrils, because only the tendrils were ever
+  // routed through `this.rng`. The blades and the canopy polyps were placed
+  // with `Math.random()` and so reshuffled on every load, which a tendril
+  // assertion could not see.
+  it("gives a repo the same blades and polyps on every load", () => {
+    const readMesh = (mesh) => {
+      const m = new THREE.Matrix4();
+      const out = [];
+      for (let i = 0; i < mesh.count; i++) {
+        mesh.getMatrixAt(i, m);
+        out.push(Array.from(m.elements).map((v) => v.toFixed(4)).join(","));
+      }
+      return out;
+    };
+    const a = new KelpTower(repo(), { quality: "low" });
+    const b = new KelpTower(repo(), { quality: "low" });
+
+    expect(readMesh(a.bladeMesh)).toEqual(readMesh(b.bladeMesh));
+    expect(readMesh(a.polyps.mesh)).toEqual(readMesh(b.polyps.mesh));
+    // The phases are what the update loop animates, so they must match too.
+    expect(a.blades.map((x) => x.phase)).toEqual(b.blades.map((x) => x.phase));
+    expect(a.polyps.map((x) => x.phase)).toEqual(b.polyps.map((x) => x.phase));
+  });
+
+  it("sways on a phase the repo owns, not a fresh one per visit", () => {
+    const a = new KelpTower(repo(), { quality: "low" });
+    const b = new KelpTower(repo(), { quality: "low" });
+    expect(a.stipeUniforms.uPhase.value).toBe(b.stipeUniforms.uPhase.value);
+  });
+
+  it("gives two different repos different blades, so a batch is not uniform", () => {
+    // Determinism must not be bought by making every tower identical.
+    const readMesh = (mesh) => {
+      const m = new THREE.Matrix4();
+      const out = [];
+      for (let i = 0; i < mesh.count; i++) {
+        mesh.getMatrixAt(i, m);
+        out.push(Array.from(m.elements).map((v) => v.toFixed(4)).join(","));
+      }
+      return out;
+    };
+    const a = new KelpTower(repo(), { quality: "low" });
+    const b = new KelpTower(repo({ id: "o/other", name: "other" }), {
+      quality: "low",
+    });
+    expect(readMesh(a.bladeMesh)).not.toEqual(readMesh(b.bladeMesh));
+    expect(a.stipeUniforms.uPhase.value).not.toBe(b.stipeUniforms.uPhase.value);
+  });
+
   it("uses one shared geometry for every tower's rings", () => {
     const a = new KelpTower(repo(), { batchProps: false, quality: "low" });
     const b = new KelpTower(repo({ id: "o/other" }), { batchProps: false, quality: "low" });

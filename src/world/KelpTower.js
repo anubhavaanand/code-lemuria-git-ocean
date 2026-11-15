@@ -126,6 +126,20 @@ export class KelpTower {
     this.rng = seeded(seedOf(repo));
     this.time = Math.random() * 100;
 
+    // A second, independent stream for the props that are NOT batched — the
+    // blades and the canopy polyps.
+    //
+    // A separate stream, not a shared one, because `this.rng` is consumed by
+    // buildHoldfast and buildWorms in a fixed order: sharing it would mean
+    // every new prop shifted the draws of every prop built after it, so adding
+    // one feature would silently change the shape of another. Two streams make
+    // each feature's randomness its own.
+    //
+    // Salted rather than seeded identically so a tower's blade arrangement and
+    // its tendril arrangement are not correlated — the same seed would put a
+    // blade exactly where a tendril is, every time.
+    this.shapeRng = seeded((seedOf(repo) ^ 0x9e3779b9) >>> 0);
+
     // When batching, the holdfast tendrils and the growth rings are posed into
     // matrices and handed to the KelpBatch instead of becoming meshes here. The
     // batch owns one buffer and one draw call for every tower.
@@ -224,12 +238,18 @@ export class KelpTower {
     // Re-origin so y=0 is the holdfast (the shader assumes this)
     geo.translate(0, this.height / 2, 0);
 
+    // The sway phase is seeded, not random. Two towers that sway in lockstep
+    // look mechanical, so this wants to differ per repo — but `Math.random()`
+    // differs per *load*, which is a different guarantee. A repo that reshuffles
+    // its sway every visit is the same defect as one that reshuffles its rings,
+    // and the QA consequence is real: a screenshot cannot be compared against a
+    // second run.
     this.stipeUniforms = {
       uTime: { value: 0 },
       uSwayAmount: { value: 0.28 + this.sway * 1.5 },
       uSwaySpeed: { value: 0.28 + this.sway * 0.75 },
       uHeight: { value: this.height },
-      uPhase: { value: Math.random() * Math.PI * 2 },
+      uPhase: { value: this.shapeRng() * Math.PI * 2 },
       uColorBase: { value: new THREE.Color(COLORS.kelpStipeDark) },
       uColorTip: { value: new THREE.Color(COLORS.kelpBlade) },
       uColorGlow: { value: new THREE.Color(this.languageColor) },
@@ -287,19 +307,27 @@ export class KelpTower {
     for (let i = 0; i < bladeCount; i++) {
       // Distribute along the upper 60% of the stipe — real kelp blades cluster
       // toward the canopy where light reaches
-      const t = 0.4 + Math.random() * 0.6;
+      const t = 0.4 + this.shapeRng() * 0.6;
       const y = this.height * t;
-      const a = Math.random() * Math.PI * 2;
-      const len = this.girth * (1.4 + Math.random() * 2.6) * (0.5 + t * 0.8);
+      const a = this.shapeRng() * Math.PI * 2;
+      const len =
+        this.girth * (1.4 + this.shapeRng() * 2.6) * (0.5 + t * 0.8);
 
       p.set(0, y, 0);
-      q.setFromEuler(new THREE.Euler(0, a, Math.PI * 0.34 + Math.random() * 0.4));
+      q.setFromEuler(
+        new THREE.Euler(0, a, Math.PI * 0.34 + this.shapeRng() * 0.4)
+      );
       s.set(len * 0.5, len, 1);
 
       m.compose(p, q, s);
       mesh.setMatrixAt(i, m);
 
-      this.blades.push({ t, a, len, phase: Math.random() * Math.PI * 2 });
+      this.blades.push({
+        t,
+        a,
+        len,
+        phase: this.shapeRng() * Math.PI * 2,
+      });
     }
 
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -339,15 +367,19 @@ export class KelpTower {
 
     this.polyps = [];
     for (let i = 0; i < count; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const r = this.girth * (0.3 + Math.random() * 0.9);
-      const y = this.height * (0.82 + Math.random() * 0.18);
-      const size = 0.06 + Math.random() * 0.08;
+      const a = this.shapeRng() * Math.PI * 2;
+      const r = this.girth * (0.3 + this.shapeRng() * 0.9);
+      const y = this.height * (0.82 + this.shapeRng() * 0.18);
+      const size = 0.06 + this.shapeRng() * 0.08;
       p.set(Math.cos(a) * r, y, Math.sin(a) * r);
       s.setScalar(size);
       m.compose(p, q, s);
       mesh.setMatrixAt(i, m);
-      this.polyps.push({ base: p.clone(), size, phase: Math.random() * Math.PI * 2 });
+      this.polyps.push({
+        base: p.clone(),
+        size,
+        phase: this.shapeRng() * Math.PI * 2,
+      });
     }
     mesh.instanceMatrix.needsUpdate = true;
     this.polyps.mesh = mesh;
