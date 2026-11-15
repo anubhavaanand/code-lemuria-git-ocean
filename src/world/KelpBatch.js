@@ -176,10 +176,12 @@ export class KelpBatch {
       // geometry or the material, which is what is wanted: the geometry is
       // SHARED, owned by the module and still in use by every tower.
       mesh.dispose();
+      // The two materials built in `build()` are owned by THIS batch, not by a
+      // tower and not by SHARED — nothing else draws with them, so they are
+      // freed here rather than left for a traverse to find.
+      if (mesh.material) mesh.material.dispose();
     }
     this.meshes.length = 0;
     this.groups.clear();
-    // The materials are shared with the batches, so disposing the geometry is
-    // enough; SHARED holds the geometry and is module-level, so it must survive.
   }
 }

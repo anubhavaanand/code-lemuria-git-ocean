@@ -65,6 +65,13 @@ export function smallFeatureKey(tower) {
  * Authored once, unit-sized, and scaled per instance. `rotateX` is applied to
  * the geometry rather than to each instance's matrix, so the instance matrix
  * carries only a scale and the two are interchangeable.
+ *
+ * These are owned by the MODULE, not by any tower. Every tower references the
+ * same three geometries and `KelpBatch` builds its instanced meshes from them,
+ * so a single dispose of one of these frees the buffers the whole forest is
+ * still drawing from. `disposeShared()` is the only correct way to release
+ * them, and it exists because the world's teardown used to reach them by
+ * accident.
  */
 export const SHARED = {
   ring: (() => {
@@ -75,6 +82,55 @@ export const SHARED = {
   tendril: new THREE.CylinderGeometry(0.02, 0.09, 1, 5),
   worm: new THREE.CylinderGeometry(0.05, 0.09, 1, 5),
 };
+
+/**
+ * Is this geometry one of the module-owned units?
+ *
+ * Every tower's rings, tendrils and worms, and every batched mesh built from
+ * them, share these three objects. A per-object teardown must skip them and
+ * `disposeShared()` must be the only thing that frees them.
+ */
+export function isSharedGeometry(g) {
+  return g === SHARED.ring || g === SHARED.tendril || g === SHARED.worm;
+}
+
+/**
+ * Release the module-owned geometry.
+ *
+ * Called once, at the very end of a teardown, after every tower and the batch
+ * have been disposed — never by a tower, and never by a per-object traverse.
+ * Idempotent: the second call finds nothing to release.
+ *
+ * The materials are deliberately NOT released here. Each tower builds its own
+ * holdfast material and `KelpBatch` builds its own pair, so those are owned by
+ * whoever created them and freed by that owner's `dispose()`. Only the three
+ * geometries are shared across every tower and both paths.
+ */
+export function disposeShared() {
+  for (const g of Object.values(SHARED)) g.dispose();
+}
+
+/**
+ * Free every geometry and material in one subtree.
+ *
+ * The world's blanket teardown does this with a bare `scene.traverse`, which
+ * reaches the module-owned geometries in SHARED and frees them from under the
+ * towers still drawing from them. `disposeShared()` runs first so those are
+ * released exactly once by their owner, and this skips them so the traverse
+ * cannot free them a second time.
+ */
+export function disposeSubtree(root) {
+  root.traverse((o) => {
+    if (o.geometry && !isSharedGeometry(o.geometry)) o.geometry.dispose();
+    if (o.material) {
+      if (Array.isArray(o.material)) {
+        for (const m of o.material) m.dispose();
+      } else {
+        o.material.dispose();
+      }
+    }
+  });
+}
 
 /**
  * A deterministic per-tower RNG.
@@ -640,14 +696,20 @@ export class KelpTower {
     // are referenced by every other tower and by the batch. Disposing one here
     // would delete the buffers the rest of the forest is still drawing from — a
     // tower that unmounts must not take the others' rings with it.
-    const shared = new Set(Object.values(SHARED));
+    //
+    // `disposeShared()` releases them once, at the end of a whole teardown.
+    // Until it is called the tower leaves them alone; after it is called they
+    // are the module's to answer for, not this object's.
 
-    this.group.traverse((o) => {
-      if (o.geometry && !shared.has(o.geometry)) o.geometry.dispose();
-      if (o.material) {
-        if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
-        else o.material.dispose();
-      }
-    });
+    // A disposed object must not answer a second teardown. three does not throw
+    // on a double dispose — it re-dispatches the event and the renderer no-ops —
+    // which is exactly why this is worth a guard: without one, a tower that is
+    // disposed twice quietly re-fires every child's dispose, and any listener
+    // that keeps state (the shared-geometry counters, a QA probe) sees events
+    // for objects that were released long ago.
+    if (this._disposed) return;
+    this._disposed = true;
+
+    disposeSubtree(this.group);
   }
 }

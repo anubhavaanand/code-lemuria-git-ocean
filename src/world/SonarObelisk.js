@@ -327,6 +327,14 @@ export class SonarObelisk {
   }
 
   dispose() {
+    // The rings are children of this group, so the traverse below already
+    // reaches them. The old code also looped `this.sonarRings` afterwards and
+    // disposed each ring a second time, which is a silent no-op rather than a
+    // crash — and that is why it survived: nothing threw, nothing looked wrong,
+    // and the only cost was a repeated dispose event on every live ring.
+    //
+    // The array is still cleared, because holding disposed objects after
+    // teardown is what made that second pass look necessary in the first place.
     this.group.traverse((o) => {
       if (o.geometry) o.geometry.dispose();
       if (o.material) {
@@ -334,10 +342,7 @@ export class SonarObelisk {
         else o.material.dispose();
       }
     });
-    for (const r of this.sonarRings) {
-      r.geometry.dispose();
-      r.material.dispose();
-    }
+    this.sonarRings.length = 0;
   }
 }
 
