@@ -1282,7 +1282,25 @@ export class OceanWorld {
     // with the thing that has to fit, and it is zero for nothing.
     const wantFraction = 0.42;
     const clearance = length * 0.6;
-    const dist = (length * 0.5) / (tx * wantFraction) + clearance;
+    // The ORBIT has to fit too, not only the animal.
+    //
+    // The whale circles at `focusRadius`, so at the far phase its nose reaches
+    // `focusRadius + length/2` from the aim point. A distance solved from the
+    // body alone therefore crops the animal at the frame edge exactly when the
+    // orbit is wider than the body — measured on vue: orbit 62, body 48.8, so
+    // the nose sat 86.4 units off-axis while the half-frame at the body-only
+    // distance covered 76. The head was cut off at the left edge, and the vision
+    // pass said so before any of this was measured.
+    //
+    // Solving against the orbit as well costs a wider frame on every repo, and
+    // that is the level's contract: "the whole repo as an animal". A whale that
+    // leaves the frame at one phase of its own orbit is not framed, it is
+    // cropped, and which phase you happen to load is not a framing decision.
+    const orbitR = this.focusRadius || 0;
+    const halfFrameNeeded = (orbitR + length * 0.5) * 1.12;
+    const distForOrbit = halfFrameNeeded / tx;
+    const distForBody = (length * 0.5) / (tx * wantFraction) + clearance;
+    const dist = Math.max(distForBody, distForOrbit);
     follow.distance = dist;
     follow.focusY = orbitY;
     // Camera height is measured FROM the focus, so this is the pitch expressed
