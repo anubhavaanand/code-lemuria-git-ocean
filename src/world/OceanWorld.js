@@ -1297,7 +1297,7 @@ export class OceanWorld {
     // leaves the frame at one phase of its own orbit is not framed, it is
     // cropped, and which phase you happen to load is not a framing decision.
     const orbitR = this.focusRadius || 0;
-    const halfFrameNeeded = (orbitR + length * 0.5) * 1.12;
+    const halfFrameNeeded = (orbitR + length * 0.5) * 1.30;
     const distForOrbit = halfFrameNeeded / tx;
     const distForBody = (length * 0.5) / (tx * wantFraction) + clearance;
     const dist = Math.max(distForBody, distForOrbit);
