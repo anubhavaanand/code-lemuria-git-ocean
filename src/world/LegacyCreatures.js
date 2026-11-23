@@ -65,6 +65,55 @@ function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
 }
 
+/**
+ * The eighteen fields the legacy builders read, flattened to one comparable
+ * string.
+ *
+ * `applyRepo` used to skip the rebuild whenever the repo object was the same
+ * reference — which is *always*, because `applyLiveToRepo` mutates the standing
+ * repo in place rather than replacing it. That made the guard blind to every
+ * field the colony reads: a live pass that corrected `readmeQuality` or
+ * `readmeLength` (the brain coral and the basking shark) rebuilt nothing, so the
+ * two animals kept their mock size while the HUD and the tower record carried
+ * the real numbers.
+ *
+ * Comparing the values rather than the reference is the only way the guard can
+ * see a README-only change. The order is fixed and the separator is a character
+ * that cannot appear in a field value, so the string is stable for a given repo
+ * and differs the moment any one field moves.
+ *
+ * @param {object} repo  a worldData repo record
+ * @returns {string}
+ */
+export function legacySignature(repo) {
+  if (!repo) return "";
+  // `undefined` maps to a marker rather than to "undefined" so a missing field
+  // and a field literally holding that string cannot collide.
+  return [
+    repo.readmeQuality,
+    repo.readmeLength,
+    repo.hasCodeOfConduct,
+    repo.hasIssueTemplate,
+    repo.hasPRTemplate,
+    repo.discussionsOpen,
+    repo.discussionsClosed,
+    repo.hasHomepage,
+    repo.homepage,
+    repo.hasWiki,
+    repo.hasChangelog,
+    repo.preRelease,
+    repo.branchCount,
+    repo.releases,
+    repo.downloads,
+    repo.hasProjects,
+    repo.hasContributing,
+    repo.hasDownloadsEnabled,
+    repo.securityScanning,
+  ]
+    .map((v) => (v === undefined || v === null ? "\u0000" : String(v)))
+    .join("\u0001");
+}
+
 // A matte, slightly translucent body material. Cheaper than a shader and it
 // reads correctly at every distance because fog does the work.
 function flesh(color, opts = {}) {
@@ -167,6 +216,12 @@ export class LegacyColony {
   }
 
   build() {
+    // Record the data this build was made from. `applyRepo` compares the next
+    // build's signature against this to decide whether anything it reads moved,
+    // which is how a README-only live pass reaches the brain coral and the
+    // basking shark without rebuilding the other sixteen animals for nothing.
+    this._sig = legacySignature(this.repo);
+
     // Order matters only for readability: benthic first (they define the
     // footprint), then the stipe dwellers, then the water-column animals.
     this.buildBrainCoral(); //    ← readmeQuality
@@ -1477,8 +1532,13 @@ export class LegacyColony {
     this.H = tower ? tower.height : 20;
     this.G = tower ? tower.girth : 1.2;
 
+    // The signature, not the reference. `before.repo === repo` was true on every
+    // call — `applyLiveToRepo` mutates the standing repo in place — so the guard
+    // could only ever see a change in the tower's shape. A README-only correction
+    // left the signature changed while H, G and the tower were identical, and the
+    // colony silently kept its mock animals.
     if (
-      before.repo === repo &&
+      this._sig === legacySignature(repo) &&
       before.H === this.H &&
       before.G === this.G &&
       before.tower === tower

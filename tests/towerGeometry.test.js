@@ -340,6 +340,68 @@ describe("the colony follows the tower", () => {
       expect(child).toBe(before[i]);
     });
   });
+
+  it("rebuilds when only a README field changed", () => {
+    // The defect this pins: the colony is rebuilt by `applyRepo`, and the only
+    // caller used to reach it through `_rederiveEntry`, which fires only when the
+    // tower's SHAPE changed. The brain coral reads `readmeQuality` and the
+    // basking shark reads `readmeLength` — neither is a tower field, so a live
+    // pass that corrected a README while leaving commits, contributors and size
+    // alone returned `changed: false` from the tower and never rebuilt the
+    // colony. The two animals kept their mock geometry while the record, and the
+    // HUD reading it, carried the real numbers.
+    //
+    // The tower here is built from a record whose shape is fixed; only the two
+    // README fields move between the base and the live record.
+    const base = repo({ readmeQuality: 0.2, readmeLength: 900 });
+    const tower = new KelpTower(base, { quality: "low" });
+    const colony = new LegacyColony(base, { tower, quality: "low" });
+    const before = colony.group.children.slice();
+    const beforeCoral = colony.registry.find((r) => r.name === "brainCoral");
+    const beforeShark = colony.baskingShark;
+    const beforeSharkGeo = beforeShark && beforeShark.children[0].geometry.parameters.radius;
+    expect(beforeCoral).toBeTruthy();
+    expect(beforeShark).toBeTruthy();
+
+    // A live record with identical shape but different README numbers.
+    const live = repo({ readmeQuality: 0.95, readmeLength: 11000 });
+    // The tower must report no shape change, or this proves nothing about the
+    // colony path — it would be the old gate firing.
+    const towerShape = tower.applyRepo(live);
+    expect(towerShape.changed).toBe(false);
+
+    const rebuilt = colony.applyRepo(live, { tower });
+
+    expect(rebuilt).toBe(true);
+    // A rebuild replaced the animals: the children are new objects.
+    expect(colony.group.children.length).toBeGreaterThan(0);
+    expect(colony.group.children[0]).not.toBe(before[0]);
+    // The brain coral's fold depth and the basking shark's body size are both
+    // derived from the fields that moved, so each rebuild drew a different
+    // animal. The shark records a presence, not a magnitude, in the registry —
+    // its length lives in the geometry, so it is measured there.
+    const afterCoral = colony.registry.find((r) => r.name === "brainCoral");
+    const afterShark = colony.baskingShark;
+    const afterSharkGeo = afterShark.children[0].geometry.parameters.radius;
+    expect(afterCoral.count).not.toBe(beforeCoral.count);
+    expect(afterSharkGeo).not.toBe(beforeSharkGeo);
+  });
+
+  it("stays a no-op when a README field is the only thing that could change and does not", () => {
+    // The counterpart to the test above: the signature guard must not rebuild
+    // when the record is identical. A guard that always rebuilt would pass the
+    // README test and quietly reintroduce the per-update churn the signature
+    // exists to prevent.
+    const base = repo({ readmeQuality: 0.5, readmeLength: 3000 });
+    const tower = new KelpTower(base, { quality: "low" });
+    const colony = new LegacyColony(base, { tower, quality: "low" });
+    const before = colony.group.children.slice();
+
+    const rebuilt = colony.applyRepo(repo({ readmeQuality: 0.5, readmeLength: 3000 }), { tower });
+
+    expect(rebuilt).toBe(false);
+    colony.group.children.forEach((child, i) => expect(child).toBe(before[i]));
+  });
 });
 
 describe("the batch follows a tower whose key changed", () => {

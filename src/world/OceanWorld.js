@@ -566,6 +566,14 @@ export class OceanWorld {
         const shape = entry.tower.applyRepo(repo);
         if (shape && shape.changed) {
           this._rederiveEntry(entry, repo);
+        } else {
+          // The tower's silhouette did not change, but the legacy colony reads
+          // eighteen fields the tower never reads — readmeQuality and readmeLength
+          // among them. Its applyRepo is guarded by a content signature, so this
+          // is a no-op unless one of those actually moved. Without it a README-only
+          // live pass would leave the brain coral and the basking shark at their
+          // mock size while the HUD showed the real numbers.
+          this._rebuildColony(entry, repo);
         }
       }
 
@@ -629,15 +637,7 @@ export class OceanWorld {
     // time anything is looked at.
     if (this.kelpBatch) this.kelpBatch.refresh(entry.tower);
 
-    if (entry.legacy && typeof entry.legacy.applyRepo === "function") {
-      const rebuilt = entry.legacy.applyRepo(repo, { tower: entry.tower });
-      if (rebuilt) {
-        // The HUD holds the registry it was handed. Rebuild the list rather than
-        // mutating it, because the old entries describe creatures that no longer
-        // exist (a repo that gained open discussions grows a herd of urchins).
-        entry.fauna = entry.legacy.creatures;
-      }
-    }
+    this._rebuildColony(entry, repo);
 
     // The selection is a snapshot. If this tower is the selected one, re-point the
     // cached focus values so the camera frames the new size rather than the old.
@@ -654,6 +654,32 @@ export class OceanWorld {
         // its pulse climb. Re-select so those are re-read from the new shape.
         this.marker.setSelected(entry.tower);
       }
+    }
+  }
+
+  /**
+   * Rebuild a tower's legacy colony if the data it reads has moved.
+   *
+   * Split out of `_rederiveEntry` because the colony has to be reachable on two
+   * paths, not one: when the tower's silhouette changes, and when only a field
+   * the tower never reads changes. `readmeQuality` and `readmeLength` are exactly
+   * that second case — a README correction moves the brain coral and the basking
+   * shark without changing the tower's height or girth, so the old gate (rebuild
+   * only when the tower's shape changed) never reached them.
+   *
+   * The colony's own `applyRepo` is guarded by a content signature, so calling it
+   * when nothing it reads changed is a string comparison and no work.
+   */
+  _rebuildColony(entry, repo) {
+    if (!entry || !entry.legacy || typeof entry.legacy.applyRepo !== "function") {
+      return;
+    }
+    const rebuilt = entry.legacy.applyRepo(repo, { tower: entry.tower });
+    if (rebuilt) {
+      // The HUD holds the registry it was handed. Rebuild the list rather than
+      // mutating it, because the old entries describe creatures that no longer
+      // exist (a repo that gained open discussions grows a herd of urchins).
+      entry.fauna = entry.legacy.creatures;
     }
   }
 
