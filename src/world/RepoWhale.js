@@ -380,7 +380,7 @@ export class RepoWhale {
       fin.position.set(
         this.xAt(0.26),
         -this.surfaceRadius(0.26) * 0.72,
-        side * this.surfaceRadius(0.26) * 0.86
+        side * this.surfaceRadiusZ(0.26) * 0.86
       );
       fin.rotation.set(side * 0.5, 0, side * -0.35);
       this.group.add(fin);
@@ -491,20 +491,29 @@ export class RepoWhale {
     const s = new THREE.Vector3(1, 1, 1);
     const p = new THREE.Vector3();
 
+    // The (t, a) pairs are kept so a sculpt can re-seat the same animals on its
+    // own cross-section after it loads. Re-drawing them would reshuffle the
+    // cluster, and a repository's barnacle pattern is part of its identity.
+    this._barnacleSeeds = [];
+
     for (let i = 0; i < count; i++) {
       // Barnacles cluster on the head and back — real settlement pattern
       const t = this.rng.barnacle() < 0.55
         ? this.rng.barnacle() * 0.3
         : this.rng.barnacle() * 0.85;
       const a = this.rng.barnacle() * Math.PI * 2;
+      this._barnacleSeeds.push({ t, a });
       // Seat on the skin. A sculpt's radius at a given fraction is not the lathe
-      // sine, so this goes through surfaceRadius() like everything else.
-      const bodyR = this.surfaceRadius(t);
+      // sine, so this goes through surfaceRadius()/surfaceRadiusZ() like
+      // everything else — vertical radius up the back, lateral radius on the
+      // flanks, because the two differ on a real animal.
+      const ry = this.surfaceRadius(t);
+      const rz = this.surfaceRadiusZ(t);
 
       p.set(
         this.xAt(t),
-        Math.cos(a) * bodyR * 0.85,
-        Math.sin(a) * bodyR
+        Math.cos(a) * ry * 0.85,
+        Math.sin(a) * rz
       );
       q.setFromEuler(new THREE.Euler(Math.PI / 2, 0, -a));
       m.compose(p, q, s);
@@ -598,6 +607,21 @@ export class RepoWhale {
   surfaceRadius(t) {
     const k = THREE.MathUtils.clamp(t, 0, 1);
     return this.girth * (0.55 + Math.sin(k * Math.PI) * 0.45);
+  }
+
+  /**
+   * Lateral (z-axis) skin radius at body fraction t.
+   *
+   * A lathe body is a surface of revolution, so its cross-section is circular
+   * and this is the same as `surfaceRadius()`. An imported sculpt is not: the
+   * measured humpback is wider across the flanks than it is deep (half-width
+   * 10.98 against half-height 9.27 at the shoulders), so a part seated on the
+   * flank needs the LATERAL radius. Seating it with the vertical one puts it
+   * ~1.7 units inside the skin, which for a barnacle the size of a barnacle is
+   * the difference between visible and gone.
+   */
+  surfaceRadiusZ(t) {
+    return this.surfaceRadius(t);
   }
 
 
@@ -718,11 +742,12 @@ export class RepoWhale {
         const r = this.remoras[i];
         const a = r.a + t * 0.12 * r.speed;
         const tt = r.t + Math.sin(t * 0.3 + r.phase) * 0.03;
-        const bodyR = this.surfaceRadius(tt);
+        const ry = this.surfaceRadius(tt);
+        const rz = this.surfaceRadiusZ(tt);
         this._rp.set(
           this.xAt(tt),
-          Math.cos(a) * bodyR * 1.05 + bodyY * 0.6,
-          Math.sin(a) * bodyR * 1.25
+          Math.cos(a) * ry * 1.05 + bodyY * 0.6,
+          Math.sin(a) * rz * 1.25
         );
         this._rq.setFromEuler(this._re.set(0, -a + Math.PI / 2, Math.sin(t * 2 + r.phase) * 0.2));
         this._rm.compose(this._rp, this._rq, this._rs);
