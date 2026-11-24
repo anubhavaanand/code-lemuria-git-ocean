@@ -380,6 +380,19 @@ export default function App() {
         // vision QA model can only look at a picture; this reports the actual
         // instance positions, so a "rocks are invisible" verdict can be checked
         // against geometry instead of argued about.
+        // The deep colonies, per language. A colony that is in the data and not
+        // in the scene is invisible to every pixel check and to every count of
+        // `towers`, so the group's size and its z range are reported directly.
+        colonies: () =>
+          (instance.colonyTowers || []).reduce((acc, c) => {
+            const p = c.tower.group.position;
+            const entry = acc[c.colony] || (acc[c.colony] = {
+              language: c.colony, towers: 0, z: [],
+            });
+            entry.towers += 1;
+            entry.z.push(Number(p.z.toFixed(0)));
+            return acc;
+          }, {}),
         rocks: () => {
           const cam = instance.camera;
           const el = containerRef.current;
