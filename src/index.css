@@ -1435,6 +1435,90 @@ kbd {
   border-color: rgba(255, 212, 121, 0.24);
 }
 
+/* ------------------------------------------------------------------ */
+/* Sign-in                                                             */
+/* ------------------------------------------------------------------ */
+.go-btn:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.go-btn[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* The callback page. Centred on its own ground rather than over the ocean,
+   because it is the one screen that has no ocean behind it yet. */
+.go-authpage {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(0, 58, 92, 0.55), transparent 65%),
+    var(--go-abyss);
+  color: var(--go-ink);
+  font-family: var(--go-sans);
+}
+
+.go-authcard {
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 26px 24px;
+  border-radius: var(--go-radius);
+  border: 1px solid var(--go-edge);
+  background: var(--go-panel);
+  backdrop-filter: blur(8px);
+}
+
+.go-auth-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.go-auth-detail {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--go-ink-dim);
+  /* Worker and GitHub errors are long and are quoted verbatim — they are the
+     only diagnostic a visitor can pass on. Wrap rather than clip. */
+  overflow-wrap: anywhere;
+}
+
+.go-authpage .go-btn {
+  align-self: flex-start;
+  text-decoration: none;
+}
+
+.go-authpage a:focus-visible {
+  outline: 2px solid var(--go-cyan);
+  outline-offset: 2px;
+}
+
+.go-auth-spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid rgba(53, 224, 255, 0.22);
+  border-top-color: var(--go-cyan);
+  animation: go-spin 0.9s linear infinite;
+}
+
+@keyframes go-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .go-auth-spinner { animation: none; }
+}
+
 @keyframes go-pulse {
   0%, 100% { opacity: 0.35; }
   50% { opacity: 1; }

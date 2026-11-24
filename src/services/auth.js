@@ -74,6 +74,9 @@ class AuthService {
 
   /**
    * Initiate login by redirecting to GitHub OAuth.
+   *
+   * Kept for callers that want the redirect themselves; the HUD uses
+   * `startSignIn` below, which goes through the worker.
    */
   login() {
     const url = this.getLoginUrl();
@@ -237,6 +240,33 @@ class AuthService {
 
 // Singleton instance
 export const auth = new AuthService();
+
+/**
+ * Where sign-in starts, or null when it cannot start.
+ *
+ * **Through the worker, not straight to GitHub.** `getOAuthUrl()` builds an
+ * authorize URL with a hard-coded `state: "git-ocean-auth"`, which is not a CSRF
+ * token at all — it is the same value on every visit, so the check the worker
+ * performs on the way back proves nothing. `/api/auth/start` mints a real
+ * per-visit UUID, stores it in an HttpOnly cookie scoped to `/auth`, and is the
+ * only endpoint whose state the exchange will accept.
+ *
+ * The same-origin path is deliberate: in production the SPA and worker share an
+ * origin, and in dev `vite.config.js` proxies `/api` to `wrangler dev`, so this
+ * one relative URL is right in both places instead of a dev-only branch.
+ *
+ * Resolves null rather than throwing when the worker is absent or misconfigured,
+ * because a missing client id is a deployment fact, not a crash — the caller
+ * says "sign-in unavailable" and the ocean keeps working anonymously.
+ *
+ * @returns {string|null}
+ */
+export function startSignIn({ redirect = "/auth/callback" } = {}) {
+  if (typeof window === "undefined") return null;
+  const base = window.location.pathname.replace(/\/auth\/callback\/?$/, "").replace(/\/+$/, "");
+  const start = `${base}/api/auth/start`.replace(/^\/?/, "/");
+  return `${start}?redirect=${encodeURIComponent(`${base}${redirect}`)}`;
+}
 
 /**
  * React hook-friendly auth state checker.
