@@ -624,12 +624,28 @@ export class RepoWhale {
     return this.surfaceRadius(t);
   }
 
+  /**
+   * The body's own diameter — what a part sized in "girth units" should use.
+   *
+   * On the lathe that is `this.girth`, the formula the body was built from. On a
+   * sculpt `this.girth` is still the lathe's number, so anything sized from it
+   * is off by however far the real animal differs; a sculpt overrides this with
+   * its measured diameter. Sizing and seating both read it, so the two cannot
+   * disagree.
+   */
+  bodyDiameter() {
+    return this.girth;
+  }
+
 
   // -------------------------------------------------------------------------
   // Blowhole + exhalation. Releases map to blows: each release is a spout.
   // -------------------------------------------------------------------------
   buildBlowhole() {
-    const geo = new THREE.SphereGeometry(this.girth * 0.1, 6, 5);
+    // Sized and seated from the body's own diameter, not the lathe formula, so
+    // a sculpt's blowhole sits flush and reads at the right scale.
+    const g = this.bodyDiameter();
+    const geo = new THREE.SphereGeometry(g * 0.1, 6, 5);
     const mat = new THREE.MeshStandardMaterial({
       color: 0x0a1219,
       roughness: 0.7,
@@ -642,22 +658,54 @@ export class RepoWhale {
     // Exhalation — a soft additive plume. Only repos with releases have one.
     const releases = this.repo.releases || 0;
     if (releases > 0) {
-      const strength = THREE.MathUtils.clamp(Math.log10(releases + 1) / 2, 0, 1);
-      const sGeo = new THREE.ConeGeometry(this.girth * 0.34, this.girth * (1.2 + strength * 2.2), 8, 1, true);
+      this.spoutStrength = THREE.MathUtils.clamp(Math.log10(releases + 1) / 2, 0, 1);
       const sMat = new THREE.MeshBasicMaterial({
         color: 0xdff6ff,
         transparent: true,
-        opacity: 0.05 + strength * 0.1,
+        opacity: 0.05 + this.spoutStrength * 0.1,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
         side: THREE.DoubleSide,
       });
-      this.spout = new THREE.Mesh(sGeo, sMat);
-      this.spout.position.set(this.xAt(0.22), this.surfaceRadius(0.22) * 1.3, 0);
+      this.spout = new THREE.Mesh(this._spoutGeometry(), sMat);
       this.spout.rotation.x = Math.PI;
-      this.spoutBaseY = this.spout.position.y;
+      this.spoutBaseY = this.surfaceRadius(0.22) * 1.3;
+      this.spout.position.set(this.xAt(0.22), this.spoutBaseY, 0);
       this.group.add(this.spout);
-      this.spoutStrength = strength;
+    }
+  }
+
+  /** The plume cone, in the body's own units. Shared so build and rescale agree. */
+  _spoutGeometry() {
+    const g = this.bodyDiameter();
+    return new THREE.ConeGeometry(
+      g * 0.34,
+      g * (1.2 + this.spoutStrength * 2.2),
+      8,
+      1,
+      true
+    );
+  }
+
+  /**
+   * Re-seat the blowhole and the plume on the body that is actually there.
+   *
+   * On the lathe this leaves the build-time placement alone. A sculpt changes
+   * the skin radius at that station, so the parts are moved to sit flush and
+   * the plume is re-sized to the measured animal rather than to the formula it
+   * was first built from.
+   */
+  reseatSpout() {
+    if (!this.blowhole && !this.spout) return;
+
+    const r = this.surfaceRadius(0.22);
+    if (this.blowhole) this.blowhole.position.y = r * 1.02;
+
+    if (this.spout) {
+      this.spout.geometry.dispose();
+      this.spout.geometry = this._spoutGeometry();
+      this.spoutBaseY = r * 1.3;
+      this.spout.position.y = this.spoutBaseY;
     }
   }
 

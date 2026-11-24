@@ -215,6 +215,19 @@ export class WhaleWithSculpt extends RepoWhale {
     return this.sculptSize.z * 0.5 * shoulder * taper;
   }
 
+  /**
+   * The measured body diameter, not the lathe formula.
+   *
+   * For vue's humpback the lathe says 9.73 units where the sculpt measures
+   * 22.90. Anything sized from the formula on a sculpt is off by 2.35x, and a
+   * blowhole or plume is small enough that the error reads as "a speck beside
+   * the animal" rather than as a misplaced part.
+   */
+  bodyDiameter() {
+    if (!this.sculptSize) return this.girth;
+    return this.sculptSize.y;
+  }
+
   /** Nose position in local space, for the blowhole and spout. */
   surfaceAtDorsal(t) {
     const r = this.surfaceRadius(t);
@@ -344,7 +357,10 @@ export class WhaleWithSculpt extends RepoWhale {
     // scale the positions the frame loop writes, so the size rides on the
     // compose vector the loop already uses.
     if (this._rs) this._rs.setScalar(partScale);
-    // Eyes and jaw are gone on a sculpt (removed above); nothing else to do.
+
+    // Blowhole and plume were built from the lathe's girth at a station the
+    // sculpt does not have. Re-seat and re-size them on the measured skin.
+    this.reseatSpout();
   }
 
   dispose() {
