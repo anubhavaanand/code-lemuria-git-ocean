@@ -83,3 +83,90 @@ describe("whale geometry", () => {
     expect(w.girth).toBeCloseTo(w.length * 0.19 * 1.05, 5);
   });
 });
+
+/**
+ * A sculpt's cross-section is an ellipse, not a circle.
+ *
+ * The lathe body is a surface of revolution, so `this.girth` is the radius in
+ * every direction and one number seats everything. The imported humpback is not:
+ * measured at 48.785 units long it is 18.54 deep (half-height 9.27) and 21.95
+ * wide (half-width 10.98). Seating a flank animal with the vertical radius puts
+ * it ~1.7 units under the skin, and a barnacle is about 0.5 units across — so
+ * the open-issue mapping was drawn entirely inside the body and never appeared.
+ */
+describe("the sculpt's elliptical cross-section", () => {
+  // A humpback sculpt as normalizeWhale + WhaleFactory would report it for a
+  // 48.785-unit vue: 0.38 of length deep, 0.45 of length wide.
+  const sculptSize = (w) => new THREE.Vector3(w.length, w.length * 0.38, w.length * 0.45);
+
+  // A repo that actually draws the fauna in question: open issues make
+  // barnacles, watchers make remoras.
+  const whaleWithFauna = (over = {}) => {
+    const world = buildWorld();
+    const base = world.following.find((r) => r.name === "vue");
+    return new WhaleWithSculpt(
+      { ...base, openIssues: 12, watchers: 40, ...over },
+      { quality: "low" }
+    );
+  };
+
+  it("keeps the lathe body circular", () => {
+    const w = whaleWithFauna();
+    expect(w.surfaceRadiusZ(0.3)).toBe(w.surfaceRadius(0.3));
+    expect(w.surfaceRadiusZ(0.7)).toBe(w.surfaceRadius(0.7));
+  });
+
+  it("gives a sculpt a lateral radius wider than its vertical one", () => {
+    const w = whaleWithFauna();
+    w.sculptSize = sculptSize(w);
+    expect(w.surfaceRadius(0.5)).toBeCloseTo(w.length * 0.38 * 0.5, 4);
+    expect(w.surfaceRadiusZ(0.5)).toBeCloseTo(w.length * 0.45 * 0.5, 4);
+    expect(w.surfaceRadiusZ(0.5)).toBeGreaterThan(w.surfaceRadius(0.5));
+  });
+
+  it("seats every barnacle on the ellipse, not inside it", () => {
+    const w = whaleWithFauna();
+    w.sculptSize = sculptSize(w);
+    w.rescaleAppendages();
+
+    expect(w.barnacleMesh).toBeTruthy();
+    expect(w._barnacleSeeds.length).toBeGreaterThan(0);
+
+    const m = new THREE.Matrix4();
+    const p = new THREE.Vector3();
+    w._barnacleSeeds.forEach((seed, i) => {
+      w.barnacleMesh.getMatrixAt(i, m);
+      p.setFromMatrixPosition(m);
+      const ry = w.surfaceRadius(seed.t);
+      const rz = w.surfaceRadiusZ(seed.t);
+      // On the ellipse: (y / (ry*0.85))^2 + (z / rz)^2 = 1. A barnacle seated
+      // with the vertical radius on both axes lands well inside this.
+      const r = (p.y / (ry * 0.85)) ** 2 + (p.z / rz) ** 2;
+      expect(r).toBeCloseTo(1, 3);
+    });
+  });
+
+  it("scales each barnacle rather than dragging the cluster inward", () => {
+    // Scaling the InstancedMesh scales its instance POSITIONS too, so the old
+    // `mesh.scale.setScalar(k)` moved the whole cluster toward the origin as it
+    // shrank the animals — the opposite of seating them on the skin.
+    const w = whaleWithFauna();
+    w.sculptSize = sculptSize(w);
+    w.rescaleAppendages();
+
+    expect(w.barnacleMesh.scale.x).toBe(1);
+    // ...and the cluster is still spread over the ellipse rather than pinned
+    // near the centreline: at least one animal reaches the flank radius.
+    const m = new THREE.Matrix4();
+    const p = new THREE.Vector3();
+    let maxZ = 0;
+    let maxRz = 0;
+    w._barnacleSeeds.forEach((seed, i) => {
+      w.barnacleMesh.getMatrixAt(i, m);
+      p.setFromMatrixPosition(m);
+      maxZ = Math.max(maxZ, Math.abs(p.z));
+      maxRz = Math.max(maxRz, w.surfaceRadiusZ(seed.t));
+    });
+    expect(maxZ).toBeGreaterThan(maxRz * 0.5);
+  });
+});

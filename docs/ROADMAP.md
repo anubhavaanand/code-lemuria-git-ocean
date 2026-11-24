@@ -191,11 +191,46 @@ points. The blockers below are still what a real launch needs.
 
 ### 3. Girth fiction
 
-`this.girth = this.length * 0.19 * build.girthMul` is a lathe formula. For a
-sculpt the real flank width is 22.90 units against a reported 9.73, so any
-appendage seated against `girth` is misplaced. `surfaceRadius()` is already
-overridden per-species from the measured profile, so most parts are fine — but
-anything reading `girth` directly is wrong. Noted, not fixed.
+**Status: fixed.**
+
+`this.girth = this.length * 0.19 * build.girthMul` is a lathe formula — the
+radius of a surface of revolution, which is the same in every direction. The
+imported humpback is not a surface of revolution. Measured at 48.785 units long
+(it is `yyx990803/vue`) it is **18.54 deep and 21.95 wide**: half-height 9.27,
+half-width 10.98.
+
+The first note on this said "the real flank width is 22.90 against a reported
+9.73" and stopped there. That compared the sculpt's *full* width against the
+lathe's *radius* — a diameter against a radius — so the 2.35x it implied was an
+arithmetic artefact, not the defect. The real one was quieter and worse:
+
+- `surfaceRadius()` was overridden for a sculpt, but it returned the **vertical**
+  radius for both axes. Every flank-seated animal therefore sat at the vertical
+  radius in z while the skin was 1.7 units further out. A barnacle is ~0.5 units
+  across, so the entire open-issue mapping was drawn *inside* the body and never
+  appeared. The census said "barnacles: 8" and the water showed none.
+- `rescaleAppendages()` then set `barnacleMesh.scale.setScalar(k)` to size them.
+  An `InstancedMesh` applies its own matrix to every instance **position**, so
+  that dragged the whole cluster toward the origin as it shrank the animals —
+  the opposite of seating them on the skin.
+
+Fixed in three parts: a `surfaceRadiusZ()` lateral profile (the vertical one for
+a circular lathe, the measured half-width for a sculpt) used for every
+flank-seated part; barnacles re-seated per-instance from stored `(t, a)` seeds
+rather than scaled through the mesh; remoras sized on the per-frame compose
+vector instead of the mesh, so the frame loop's positions stay put.
+
+What is deliberately *not* changed: `this.girth` itself. It is still the lathe's
+radius parameter and the procedural body's widest radius, and the flippers,
+flukes, barnacle and remora sizes that pass through `rescaleAppendages` already
+correct for the ratio. The 5% difference between `girth` (9.73) and the sculpt's
+half-height (9.27) is within the tolerance of a stylised animal and is not worth
+a second formula.
+
+Four tests in `tests/whaleGeometry.test.js` pin it: the lathe stays circular, a
+sculpt's lateral radius exceeds its vertical one, every barnacle satisfies the
+ellipse equation after `rescaleAppendages`, and the barnacle mesh is left
+unscaled so the cluster is not dragged inward.
 
 ### 4. Metro geometry
 

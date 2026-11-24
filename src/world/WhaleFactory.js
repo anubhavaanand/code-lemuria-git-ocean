@@ -197,6 +197,24 @@ export class WhaleWithSculpt extends RepoWhale {
     return s.y * 0.5 * shoulder * taper;
   }
 
+  /**
+   * Lateral (z-axis) skin radius at body fraction t.
+   *
+   * The sculpt's cross-section is an ellipse, not a circle: the measured
+   * humpback is 21.95 wide against 18.54 deep (half-width 10.98, half-height
+   * 9.27), so a part on the flank sits ~1.7 units further out than the vertical
+   * radius would put it. Seating everything with the vertical radius buried the
+   * barnacles — the open-issue mapping — inside the body, where a 0.5-unit
+   * shell 1.7 units under the skin is simply not drawn.
+   */
+  surfaceRadiusZ(t) {
+    if (!this.sculptSize) return super.surfaceRadiusZ(t);
+    const k = THREE.MathUtils.clamp(t, 0, 1);
+    const shoulder = Math.min(1, k / 0.24) ** 0.5;
+    const taper = k < 0.55 ? 1 : 1 - ((k - 0.55) / 0.45) ** 1.5 * 0.82;
+    return this.sculptSize.z * 0.5 * shoulder * taper;
+  }
+
   /** Nose position in local space, for the blowhole and spout. */
   surfaceAtDorsal(t) {
     const r = this.surfaceRadius(t);
@@ -279,7 +297,7 @@ export class WhaleWithSculpt extends RepoWhale {
       f.mesh.position.set(
         this.xAt(0.26),
         -this.surfaceRadius(0.26) * 0.72,
-        f.side * this.surfaceRadius(0.26) * 0.86
+        f.side * this.surfaceRadiusZ(0.26) * 0.86
       );
     }
 
@@ -289,16 +307,44 @@ export class WhaleWithSculpt extends RepoWhale {
       this.flukePivot.scale.setScalar(Math.max(0.6, girthRatio));
     }
 
-    // Barnacles and remoras were positioned with the lathe profile. They are
-    // animated every frame from surfaceRadius()/xAt(), so both now resolve to
-    // the sculpt automatically — but their own body size is absolute, so it is
-    // scaled with the animal.
+    // Barnacles and remoras were positioned with the lathe's circular profile,
+    // and their body size is absolute, so both need the sculpt's real
+    // cross-section and a size correction.
+    //
+    // Neither is scaled through the mesh. An InstancedMesh applies its own
+    // matrix to every instance position, so `mesh.scale.setScalar(k)` moves the
+    // whole cluster toward the origin as well as shrinking each animal — the
+    // barnacles ended up further inside the body, not on it. The size lives on
+    // each instance (barnacles) or on the per-frame compose vector (remoras).
     const partScale = THREE.MathUtils.clamp(girthRatio, 0.55, 2.2);
-    for (const m of [this.barnacleMesh, this.remoraMesh]) {
-      if (m) m.scale.setScalar(partScale);
+
+    if (this.barnacleMesh && this._barnacleSeeds) {
+      const m = new THREE.Matrix4();
+      const q = new THREE.Quaternion();
+      const e = new THREE.Euler();
+      const sv = new THREE.Vector3(partScale, partScale, partScale);
+      const pv = new THREE.Vector3();
+      this._barnacleSeeds.forEach((seed, i) => {
+        const ry = this.surfaceRadius(seed.t);
+        const rz = this.surfaceRadiusZ(seed.t);
+        pv.set(
+          this.xAt(seed.t),
+          Math.cos(seed.a) * ry * 0.85,
+          Math.sin(seed.a) * rz
+        );
+        q.setFromEuler(e.set(Math.PI / 2, 0, -seed.a));
+        m.compose(pv, q, sv);
+        this.barnacleMesh.setMatrixAt(i, m);
+      });
+      this.barnacleMesh.instanceMatrix.needsUpdate = true;
     }
-    // Eyes and jaw are gone on a sculpt (removed above), so the loop is left
-    // in place for the procedural body but resolves to nothing here.
+
+    // Remoras are re-positioned every frame in update(), which now reads the
+    // lateral radius; only their size is carried here. Scaling the mesh would
+    // scale the positions the frame loop writes, so the size rides on the
+    // compose vector the loop already uses.
+    if (this._rs) this._rs.setScalar(partScale);
+    // Eyes and jaw are gone on a sculpt (removed above); nothing else to do.
   }
 
   dispose() {
