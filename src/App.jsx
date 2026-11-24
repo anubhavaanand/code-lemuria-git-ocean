@@ -19,6 +19,18 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OceanWorld } from "./world/OceanWorld";
 import { loadProfile } from "./services/profile";
+import { isAuthenticated, fetchViewerAndRepos } from "./services/github-api";
+
+/**
+ * How many of a signed-in viewer's repositories the first pass asks for.
+ *
+ * Not a round number: it is a rate-limit budget. Every repository costs a
+ * first-pass query and an enrichment, and the anonymous floor is sixty requests
+ * an hour against a signed-in budget of 5,000 points. Twelve keeps a full pass
+ * inside a few percent of that budget, keeps the first frame under a second on a
+ * warm cache, and is more repositories than anyone reads at one zoom level.
+ */
+const MAX_LIVE_REPOS = 12;
 import { FrameProfiler } from "./world/perf";
 import { ZOOM_LEVELS } from "./world/constants";
 import HUD from "./ui/HUD";
@@ -1015,9 +1027,42 @@ export default function App() {
     let cancelled = false;
 
     if (!skipLive) {
-      const owner =
+      // Async IIFE, not `await` at this level: a `useEffect` callback is
+      // synchronous by contract, and awaiting inside it makes the cleanup it
+      // returns a promise React cannot run. The whole live pass lives here
+      // instead, and `cancelled` still gates every `setState` after an await.
+      (async () => {
+      let owner =
         params.get("owner") || instance.data.you.username || "anubhavaanand";
-      const names = instance.data.yourRepos.map((r) => r.name);
+      // The mock world is the fallback, not the source of truth about which
+      // repositories exist. Before this, the live pass asked GitHub for the
+      // *mock* names under a hard-coded login, so a signed-in developer saw
+      // their own numbers only for the four repositories this repo's mock data
+      // happens to contain, and a 404 for the rest. A signed-in viewer is asked
+      // for their own repositories instead.
+      let names = instance.data.yourRepos.map((r) => r.name);
+      if (isAuthenticated()) {
+        try {
+          const viewer = await fetchViewerAndRepos();
+          if (cancelled) return;
+          const own = viewer.repos
+            .filter((r) => !r.isFork)
+            .sort((a, b) => (b.stars || 0) - (a.stars || 0))
+            .slice(0, MAX_LIVE_REPOS);
+          if (own.length) {
+            names = own.map((r) => r.name);
+            // The login, not the mock username: every record the pass returns
+            // is addressed as `owner/name`, and the tower ids are built from it.
+            owner = viewer.viewer.login;
+          }
+        } catch (err) {
+          // A failed viewer call is not a failed ocean. The mock set is still
+          // there and the anonymous path below still works; saying so once is
+          // what turns "the numbers look wrong" into a diagnosis.
+          console.warn("[git-ocean] reader fetch failed, using the mock set", err);
+        }
+      }
+
       const enrich = params.get("enrich") !== "0";
 
       setDataState({ stage: "first", done: 0, total: names.length });
@@ -1053,6 +1098,7 @@ export default function App() {
           console.warn("[git-ocean] live data failed, staying on the mock world", err);
           setDataState({ stage: "failed", error: String(err && err.message || err) });
         });
+      })();
     }
 
     return () => {

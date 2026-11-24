@@ -175,9 +175,19 @@ function beginAuth(request, env, origin) {
   const redirectPath = url.searchParams.get("redirect") || "/auth/callback";
   const state = crypto.randomUUID();
 
+  // The app's origin, not this worker's.
+  //
+  // `origin` here is the worker's own URL, which is only the same as the app's
+  // when they share a host. On Cloudflare Pages behind a worker route they do
+  // not: redirecting the browser to the worker's origin after consent would
+  // land it on a bare API host with no ocean to return to, and the token would
+  // be minted for a visitor who then sees a 404. APP_ORIGIN is set as a worker
+  // variable; the fallback keeps a same-origin deployment working unchanged.
+  const appOrigin = (env.APP_ORIGIN || origin).replace(/\/+$/, "");
+
   const authorize = new URL(GITHUB_AUTHORIZE);
   authorize.searchParams.set("client_id", env.GITHUB_CLIENT_ID);
-  authorize.searchParams.set("redirect_uri", `${origin}${redirectPath}`);
+  authorize.searchParams.set("redirect_uri", `${appOrigin}${redirectPath}`);
   authorize.searchParams.set("scope", env.GITHUB_SCOPES || "read:user read:org repo");
   authorize.searchParams.set("state", state);
   authorize.searchParams.set("allow_signup", "true");

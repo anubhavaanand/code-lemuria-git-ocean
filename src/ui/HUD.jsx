@@ -12,6 +12,8 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { CODEX, codexEntry } from "../world/codex";
+import { auth, startSignIn } from "../services/auth";
+import { isAuthenticated } from "../services/github-api";
 
 /* ------------------------------------------------------------------ */
 /* Small pieces                                                        */
@@ -555,6 +557,79 @@ function CreditLine({ world }) {
  * Nothing here is an error state. A failed fetch leaves a correct ocean that is
  * merely mocked, and the wording says exactly that.
  */
+/**
+ * Sign in with GitHub — the one control the API layer was missing.
+ *
+ * `auth.js` implemented the whole OAuth flow and nothing called it, so the ocean
+ * was anonymous-only: sixty requests an hour, mock repositories, and no way for
+ * a visitor to see their own data. This is the entry point.
+ *
+ * `signInUrl` is asked for at click time rather than at render, because it is a
+ * full-page navigation and the worker mints the `state` CSRF cookie on the way.
+ * Building it early would mint a state value that expires before it is used.
+ *
+ * Signed in, the chip becomes the account and a way out. It does not poll: the
+ * token is read once on mount, and a sign-out is a local state change.
+ */
+function SignInChip() {
+  const [signedIn, setSignedIn] = useState(() => {
+    try {
+      return isAuthenticated();
+    } catch {
+      return false;
+    }
+  });
+  const [busy, setBusy] = useState(false);
+  const [unavailable, setUnavailable] = useState(false);
+
+  if (signedIn) {
+    return (
+      <button
+        className="go-btn is-ghost is-on"
+        onClick={() => {
+          auth.logout();
+          setSignedIn(false);
+        }}
+        title="Signed in with GitHub — click to sign out"
+      >
+        Signed in
+      </button>
+    );
+  }
+
+  if (unavailable) {
+    return (
+      <span
+        className="go-btn is-ghost"
+        title="The sign-in worker is not configured. Set VITE_GITHUB_CLIENT_ID and run `wrangler dev`."
+        aria-disabled="true"
+      >
+        Sign-in unavailable
+      </span>
+    );
+  }
+
+  return (
+    <button
+      className="go-btn"
+      disabled={busy}
+      onClick={() => {
+        setBusy(true);
+        const url = startSignIn();
+        if (!url) {
+          setBusy(false);
+          setUnavailable(true);
+          return;
+        }
+        window.location.href = url;
+      }}
+      title="Sign in with GitHub to read your own repositories"
+    >
+      {busy ? "Redirecting…" : "Sign in"}
+    </button>
+  );
+}
+
 function DataStatus({ state }) {
   if (!state) return null;
 
@@ -743,6 +818,7 @@ export default function HUD({
             </div>
           )}
           <DataStatus state={dataState} />
+          <SignInChip />
           <button
             className={"go-btn is-ghost" + (legendOpen ? " is-on" : "")}
             onClick={() => setLegendOpen((v) => !v)}
