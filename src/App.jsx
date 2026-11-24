@@ -45,9 +45,15 @@ export default function App() {
   // review of the silhouette through the HUD is a review of the HUD. This is the
   // capture harness's switch, not a user-facing mode — it exists so a frame can
   // be compared against the render without the interface in the way.
-  const bare =
-    typeof window !== "undefined" &&
-    new URLSearchParams(window.location.search).get("bare") === "1";
+  //
+  // Read ONCE, in a state initialiser, like `levelId` below. The query string is
+  // fixed for the life of the page, so parsing it in the render body re-parsed
+  // the same URL on every render — and this was the only flag here that did.
+  const [bare] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("bare") === "1"
+  );
 
   const [world, setWorld] = useState(null);
   const [selectedRepo, setSelectedRepo] = useState(null);
@@ -237,12 +243,20 @@ export default function App() {
                   Number(instance.focusPoint.z.toFixed(1)),
                 ]
               : null,
+            // The framing distance, and WHY it is null when it is.
+            //
+            // `_follow()` is the exact function the camera solves from, so this
+            // is the number a "the whale is cropped" report is checked against.
+            // It used to swallow any throw into a bare `null`, which made
+            // "framing failed" indistinguishable from "nothing selected" —
+            // the one distinction this census exists to make. A throw now
+            // reports its message instead of vanishing.
             followDistance: (() => {
               try {
                 const f = instance._follow();
                 return f && f.distance != null ? Number(f.distance.toFixed(2)) : null;
               } catch (e) {
-                return null;
+                return `threw: ${(e && e.message) || String(e)}`;
               }
             })(),
             nodes: (() => {
