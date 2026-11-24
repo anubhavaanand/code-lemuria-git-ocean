@@ -361,6 +361,7 @@ export class WhaleWithSculpt extends RepoWhale {
     // Blowhole and plume were built from the lathe's girth at a station the
     // sculpt does not have. Re-seat and re-size them on the measured skin.
     this.reseatSpout();
+    this.reseatPleats();
   }
 
   dispose() {

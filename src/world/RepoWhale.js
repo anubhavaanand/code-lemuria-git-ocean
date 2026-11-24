@@ -723,7 +723,8 @@ export class RepoWhale {
       this.isMobile ? 5 : 14
     );
 
-    const geo = new THREE.TorusGeometry(this.girth * 0.55, this.girth * 0.012, 3, 10, Math.PI);
+    const g = this.bodyDiameter();
+    const geo = new THREE.TorusGeometry(g * 0.55, g * 0.012, 3, 10, Math.PI);
     const mat = new THREE.MeshStandardMaterial({
       color: COLORS.whaleVentral,
       roughness: 0.9,
@@ -731,6 +732,11 @@ export class RepoWhale {
       opacity: 0.35,
     });
 
+    // Kept, not just added: a sculpt swaps the body under these, and the
+    // remoras are the precedent — a list of stations re-seated by the owner of
+    // the new skin. Without this the pleats are placed once against a body that
+    // no longer exists and cannot be corrected.
+    this.pleats = [];
     for (let i = 0; i < count; i++) {
       const t = 0.05 + (i / count) * 0.32;
       const pleat = new THREE.Mesh(geo, mat);
@@ -740,6 +746,26 @@ export class RepoWhale {
       pleat.rotation.z = Math.PI;
       pleat.scale.setScalar(1 - t * 0.4);
       this.group.add(pleat);
+      this.pleats.push({ mesh: pleat, t });
+    }
+  }
+
+  /**
+   * Re-seat the ventral pleats on the body that is actually there.
+   *
+   * A humpback's pleats are a signature of the anatomy, and a sculpt that has
+   * them modelled already does not need these — but a repo's closed-issue count
+   * is data the sculpt cannot express, so they stay and are moved to the
+   * measured skin instead of being dropped. Sizing comes from the torus the
+   * build used, scaled here to the diameter difference.
+   */
+  reseatPleats() {
+    if (!this.pleats || !this.pleats.length) return;
+    const k = this.girth > 0.0001 ? this.bodyDiameter() / this.girth : 1;
+    for (const p of this.pleats) {
+      const bodyR = this.surfaceRadius(p.t);
+      p.mesh.position.set(this.xAt(p.t), -bodyR * 0.55, 0);
+      p.mesh.scale.setScalar((1 - p.t * 0.4) * k);
     }
   }
 

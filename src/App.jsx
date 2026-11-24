@@ -278,6 +278,7 @@ export default function App() {
             // `girth` so the gap between the formula and the animal is a number
             // in the census rather than something to infer from two fields.
             bodyDiameter: Number(w.bodyDiameter().toFixed(2)),
+            pleats: w.pleats ? w.pleats.length : 0,
             spoutPlume: w.spout
               ? (() => {
                   w.spout.geometry.computeBoundingBox();

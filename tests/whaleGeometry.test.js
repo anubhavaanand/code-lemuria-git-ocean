@@ -101,6 +101,35 @@ describe("whale geometry", () => {
     expect(w.spout.position.y).toBeCloseTo(w.surfaceRadius(0.22) * 1.3, 5);
   });
 
+  it("re-seats the ventral pleats on the sculpt's skin", () => {
+    const world = buildWorld();
+    const repo = world.following.find((r) => r.name === "vue");
+    const w = new WhaleWithSculpt(repo, { quality: "low" });
+
+    // Pleats are closed issues; vue has thousands, so the build makes several.
+    expect(w.pleats.length).toBeGreaterThan(1);
+    const latheX = w.pleats.map((p) => p.mesh.position.x);
+
+    w.sculptSize = new THREE.Vector3(w.length, 22.9, 22.9);
+    w.rescaleAppendages();
+
+    // The stations follow the sculpt's nose and tail, not the lathe's.
+    const sculptX = w.pleats.map((p) => p.mesh.position.x);
+    expect(sculptX).not.toEqual(latheX);
+
+    // Each pleat sits on the skin at its own fraction.
+    for (const p of w.pleats) {
+      expect(p.mesh.position.x).toBeCloseTo(w.xAt(p.t), 4);
+      expect(p.mesh.position.y).toBeCloseTo(-w.surfaceRadius(p.t) * 0.55, 4);
+    }
+
+    // The arc grew with the animal rather than staying at the formula's size.
+    const k = 22.9 / w.girth;
+    const first = w.pleats[0];
+    expect(first.mesh.scale.x).toBeCloseTo((1 - first.t * 0.4) * k, 4);
+    expect(first.mesh.scale.x).toBeGreaterThan(1 - first.t * 0.4);
+  });
+
   it("scales the animal from the commit count, as the roadmap says", () => {
     const world = buildWorld();
     const repo = world.following.find((r) => r.name === "vue");
