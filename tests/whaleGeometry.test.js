@@ -80,7 +80,7 @@ describe("whale geometry", () => {
     const w = new WhaleWithSculpt(repo, { quality: "low" });
 
     // The lathe body: the spout is built from `girth`, so the two agree.
-    const latheG = w.spoutGirth();
+    const latheG = w.bodyDiameter();
     expect(latheG).toBeCloseTo(w.girth, 6);
     w.spout.geometry.computeBoundingBox();
     const latheH = w.spout.geometry.boundingBox.max.y - w.spout.geometry.boundingBox.min.y;
@@ -90,7 +90,7 @@ describe("whale geometry", () => {
     w.sculptSize = new THREE.Vector3(w.length, 22.9, 22.9);
     w.rescaleAppendages();
 
-    expect(w.spoutGirth()).toBeCloseTo(22.9, 6);
+    expect(w.bodyDiameter()).toBeCloseTo(22.9, 6);
     w.spout.geometry.computeBoundingBox();
     const sculptH = w.spout.geometry.boundingBox.max.y - w.spout.geometry.boundingBox.min.y;
 
