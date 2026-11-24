@@ -989,7 +989,6 @@ export default function App() {
             // The login, not the mock username: every record the pass returns
             // is addressed as `owner/name`, and the tower ids are built from it.
             owner = viewer.viewer.login;
-            if (instance.setLiveOwner) instance.setLiveOwner(viewer.viewer);
           }
         } catch (err) {
           // A failed viewer call is not a failed ocean. The mock set is still
