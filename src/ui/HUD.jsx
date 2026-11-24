@@ -10,8 +10,9 @@
  *   Bottom-left  — legend toggle (what each shape means)
  */
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { CODEX, codexEntry } from "../world/codex";
+import { WhaleSong, resolveSong } from "../world/LanguageSong";
 
 /* ------------------------------------------------------------------ */
 /* Small pieces                                                        */
@@ -621,6 +622,10 @@ export default function HUD({
   dataState,
 }) {
   const [legendOpen, setLegendOpen] = useState(false);
+  // Song is off until asked for. The mapping has existed in constants.js since
+  // the first design pass; this is the switch that finally hears it.
+  const [songOn, setSongOn] = useState(false);
+  const songRef = useRef(null);
   // The creature under the pointer, polled from the world's marker. The world
   // owns the raycast; the HUD owns the DOM, so the name travels across as a
   // string rather than the scene writing a label itself.
@@ -633,6 +638,22 @@ export default function HUD({
     const id = setInterval(sync, 120);
     return () => clearInterval(id);
   }, [world]);
+
+  // A call plays when the song is on and a new animal is selected. The song is
+  // resolved from the repo's own language, so two repos in the same language
+  // sing the same dialect — which is the claim the mapping makes.
+  useEffect(() => {
+    if (!songOn || !selectedRepo) return;
+    if (!songRef.current) songRef.current = new WhaleSong();
+    songRef.current.play(resolveSong(selectedRepo), { seconds: 4, closeness: 0.7 });
+  }, [songOn, selectedRepo]);
+
+  useEffect(() => {
+    return () => {
+      if (songRef.current) songRef.current.dispose();
+      songRef.current = null;
+    };
+  }, []);
 
   const [identity, setIdentity] = useState(null);
   const [stats, setStats] = useState(null);
@@ -743,6 +764,19 @@ export default function HUD({
             </div>
           )}
           <DataStatus state={dataState} />
+          <button
+            className={"go-btn is-ghost" + (songOn ? " is-on" : "")}
+            onClick={() => setSongOn((v) => !v)}
+            aria-pressed={songOn}
+            aria-label={songOn ? "Mute whale song" : "Hear the whale's song"}
+            title={
+              songOn
+                ? "Mute the whale's song"
+                : "Hear the selected whale sing in its language's dialect"
+            }
+          >
+            {songOn ? "Song on" : "Song off"}
+          </button>
           <button
             className={"go-btn is-ghost" + (legendOpen ? " is-on" : "")}
             onClick={() => setLegendOpen((v) => !v)}
