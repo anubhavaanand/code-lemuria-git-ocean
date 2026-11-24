@@ -613,6 +613,7 @@ export default function HUD({
   world,
   levels,
   activeLevelId,
+  cameraDepth,
   onLevelChange,
   selectedRepo,
   onClearSelection,
@@ -693,6 +694,19 @@ export default function HUD({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClearSelection, onLevelChange, activeLevelId, levels]);
 
+  // The gauge reads the camera's depth (the water the viewer is in), falling
+  // back to the identity's own depth before the first frame reports. One value,
+  // used by the number, the zone label and the bar, so they cannot disagree.
+  const gaugeDepth = cameraDepth != null ? cameraDepth : identity ? identity.depth : -520;
+  const zone =
+    gaugeDepth > -200
+      ? "Epipelagic"
+      : gaugeDepth > -1000
+      ? "Mesopelagic"
+      : gaugeDepth > -4000
+      ? "Bathypelagic"
+      : "Abyssopelagic";
+
   return (
     <div className="go-hud">
       <header className="go-topbar">
@@ -743,23 +757,13 @@ export default function HUD({
         {identity && (
           <div className="go-depthpanel">
             <div className="go-depth-label">Depth</div>
-            <div className="go-depth-value">
-              {Math.round(identity.depth)} m
-            </div>
-            <div className="go-depth-zone">
-              {identity.depth > -200
-                ? "Epipelagic"
-                : identity.depth > -1000
-                ? "Mesopelagic"
-                : identity.depth > -4000
-                ? "Bathypelagic"
-                : "Abyssopelagic"}
-            </div>
+            <div className="go-depth-value">{Math.round(gaugeDepth)} m</div>
+            <div className="go-depth-zone">{zone}</div>
             <div className="go-depth-bar">
               <div
                 className="go-depth-fill"
                 style={{
-                  height: Math.min(100, (Math.abs(identity.depth) / 6000) * 100) + "%",
+                  height: Math.min(100, (Math.abs(gaugeDepth) / 6000) * 100) + "%",
                 }}
               />
             </div>

@@ -12,7 +12,7 @@ beforeAll(() => {
 });
 import * as THREE from "three";
 import { CameraRig } from "../src/world/CameraRig";
-import { ZOOM_LEVELS } from "../src/world/constants";
+import { ZOOM_LEVELS, SURFACE_Y } from "../src/world/constants";
 
 /**
  * The rig's follow framing.
@@ -149,5 +149,108 @@ describe("camera rig follow framing", () => {
     const pitchTerm = -Math.sin(r.pitch) * city.distance * 0.55;
     expect(r.focus.y).toBeCloseTo(city.focusY, 1);
     expect(r.camera.position.y).toBeCloseTo(city.focusY + city.height + pitchTerm, 1);
+  });
+});
+
+/**
+ * The camera must never break the surface.
+ *
+ * The world level aims at the floor from a 700-unit rise over a 1,450-unit
+ * dolly, which puts the eye at y ≈ 716 — 296 units ABOVE the water surface at
+ * y = 420. From up there the surface renders as a bright flat ceiling across
+ * the top of the frame (the surface seen from above), not as a water column you
+ * are descending through. Measured on the live scene, that bright slab was the
+ * single most broken thing about the world view.
+ *
+ * A viewer at −4,200 m is under the water. The lens has to be too.
+ */
+describe("camera surface clamp", () => {
+  const dom = () => {
+    const noop = () => {};
+    return {
+      addEventListener: noop,
+      removeEventListener: noop,
+      setPointerCapture: noop,
+      releasePointerCapture: noop,
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 1440, height: 900 }),
+      style: {},
+      ownerDocument: { addEventListener: noop, removeEventListener: noop },
+    };
+  };
+
+  it("keeps the eye under the surface at the world level", () => {
+    const camera = new THREE.PerspectiveCamera(62, 1440 / 900, 0.5, 12000);
+    const r = new CameraRig(camera, dom(), { levels: ZOOM_LEVELS });
+    r.goTo(0);
+    r.apply(0, true, null);
+    expect(r.camera.position.y).toBeLessThan(SURFACE_Y);
+  });
+
+  it("never lifts the eye above the surface at any level", () => {
+    const camera = new THREE.PerspectiveCamera(62, 1440 / 900, 0.5, 12000);
+    const r = new CameraRig(camera, dom(), { levels: ZOOM_LEVELS });
+    for (let i = 0; i < ZOOM_LEVELS.length; i++) {
+      r.goTo(i);
+      r.apply(0, true, null);
+      expect(r.camera.position.y).toBeLessThan(SURFACE_Y);
+    }
+  });
+
+  it("leaves a level that already sits under the surface untouched", () => {
+    // The clamp must be soft: the tower level's eye is ~62 units, nowhere near
+    // the surface, and it must come out exactly as authored.
+    const camera = new THREE.PerspectiveCamera(48, 1440 / 900, 0.5, 12000);
+    const r = new CameraRig(camera, dom(), { levels: ZOOM_LEVELS });
+    r.goTo(3);
+    r.apply(0, true, null);
+    const tower = ZOOM_LEVELS[3];
+    const pitchTerm = -Math.sin(r.pitch) * tower.distance * 0.55;
+    expect(r.camera.position.y).toBeCloseTo(tower.focusY + tower.height + pitchTerm, 1);
+  });
+});
+
+/**
+ * The station ring must actually be a ring.
+ *
+ * `stationPosition()` is an orthographic projection of real latitude and
+ * longitude, so the capitals wrap around the map's centre. A version mirrored
+ * the front hemisphere to the back to keep every station behind one camera —
+ * which silently rewrote the geography (Beijing and Tokyo swapped hemispheres)
+ * and left the network connecting cities that were no longer near each other.
+ * This pins the projection to the real formula and pins the spread.
+ */
+describe("station lattice geometry", () => {
+  it("places every capital by a real lat/lon projection", async () => {
+    const { CAPITAL_CLUSTERS, stationPosition } = await import("../src/world/worldData");
+    for (const c of CAPITAL_CLUSTERS) {
+      const lat = (c.lat * Math.PI) / 180;
+      const lon = (c.lon * Math.PI) / 180;
+      const ring = Math.cos(lat) * 900;
+      const p = stationPosition(c);
+      expect(p.x).toBeCloseTo(Math.sin(lon) * ring, 4);
+      expect(p.z).toBeCloseTo(Math.cos(lon) * ring - 300, 4);
+    }
+  });
+
+  it("separates the capitals into a basin-wide basin, not a smear", async () => {
+    const { CAPITAL_CLUSTERS, stationPosition } = await import("../src/world/worldData");
+    const pts = CAPITAL_CLUSTERS.map((c) => stationPosition(c));
+    let min = Infinity;
+    for (let i = 0; i < pts.length; i++) {
+      for (let j = i + 1; j < pts.length; j++) {
+        min = Math.min(min, Math.hypot(pts[i].x - pts[j].x, pts[i].z - pts[j].z));
+      }
+    }
+    // No two stations may collapse onto each other.
+    expect(min).toBeGreaterThan(80);
+    // And the ring spans most of the basin, so it reads as a map rather than a
+    // cluster: the widest pair is well over half the ring radius.
+    let max = 0;
+    for (let i = 0; i < pts.length; i++) {
+      for (let j = i + 1; j < pts.length; j++) {
+        max = Math.max(max, Math.hypot(pts[i].x - pts[j].x, pts[i].z - pts[j].z));
+      }
+    }
+    expect(max).toBeGreaterThan(900);
   });
 });

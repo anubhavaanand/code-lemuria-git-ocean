@@ -12,7 +12,7 @@
  */
 
 import * as THREE from "three";
-import { COLORS, LAYERS } from "./constants";
+import { COLORS, LAYERS, SURFACE_Y } from "./constants";
 import {
   causticsVertex,
   causticsFragment,
@@ -202,9 +202,12 @@ export class OceanEnvironment {
 
     this.waterSurface = new THREE.Mesh(geo, mat);
     this.waterSurface.rotation.x = Math.PI / 2;
-    // The surface is ~400 units above the seafloor at this scale. Placing it
-    // at 620 is what pushed it off the top of the frame at every zoom.
-    this.waterSurface.position.set(0, 420, -600);
+    // The surface is the ceiling of the water column, at SURFACE_Y. The camera's
+    // world-level lens parks just under it (see SURFACE_Y and the clamp in
+    // CameraRig) so it reads from below — a rippling sheet of light overhead,
+    // the thing every diver sees — rather than from above, where it was a bright
+    // flat slab cutting the frame in half.
+    this.waterSurface.position.set(0, SURFACE_Y, -600);
     this.waterSurface.renderOrder = -820;
     this.group.add(this.waterSurface);
     this.disposables.push(geo, mat);
@@ -283,9 +286,14 @@ export class OceanEnvironment {
       transparent: true,
       depthWrite: false,
       uniforms: {
-        uColorTop: { value: new THREE.Color(COLORS.sediment) },
-        uColorBottom: { value: new THREE.Color(COLORS.abyss) },
-        uOpacity: { value: 0.82 },
+        // A distant ridge is haze-blued, not black. Used to render as a
+        // near-black silhouette against the water, which read as a wall across
+        // the frame rather than as a mountain range fading into the column.
+        // Both stops are now close to the water itself, so the ridge reads as
+        // *distance* — aerial perspective — instead of as an object.
+        uColorTop: { value: new THREE.Color(0x3f6278) },
+        uColorBottom: { value: new THREE.Color(0x16334a) },
+        uOpacity: { value: 0.45 },
       },
       vertexShader: ridgeVertex,
       fragmentShader: ridgeFragment,
@@ -302,8 +310,8 @@ export class OceanEnvironment {
     const geo2 = new THREE.PlaneGeometry(2200, 460);
     const mat2 = mat.clone();
     mat2.uniforms = THREE.UniformsUtils.clone(mat.uniforms);
-    mat2.uniforms.uColorTop.value = new THREE.Color(0x101820);
-    mat2.uniforms.uOpacity.value = 0.9;
+    mat2.uniforms.uColorTop.value = new THREE.Color(0x2b4a60);
+    mat2.uniforms.uOpacity.value = 0.55;
 
     this.midRidge = new THREE.Mesh(geo2, mat2);
     this.midRidge.position.set(160, 150, LAYERS.farRidge + 220);
@@ -356,7 +364,7 @@ export class OceanEnvironment {
   // -------------------------------------------------------------------------
   // Per-frame update
   // -------------------------------------------------------------------------
-  update(delta, elapsed) {
+  update(delta, elapsed, depth) {
     this.clock = elapsed;
 
     if (this.gradient) {
@@ -367,12 +375,38 @@ export class OceanEnvironment {
     }
     if (this.godRays) {
       this.godRays.material.uniforms.uTime.value = elapsed;
-      // Slow breathing of the light shafts
+      // Slow breathing of the light shafts. The depth fade is applied after,
+      // once, so it is not multiplied in twice per frame.
       this.godRays.material.uniforms.uIntensity.value =
         0.42 + Math.sin(elapsed * 0.21) * 0.1 + Math.sin(elapsed * 0.07) * 0.06;
     }
     if (this.waterSurface) {
       this.waterSurface.material.uniforms.uTime.value = elapsed;
+    }
+
+    // The surface is only visible from the sunlit zone.
+    //
+    // At −4,200 m there is no water surface above you — that is the whole point
+    // of the abyss, and a bright ceiling in the world view was both physically
+    // false and visually a slab across the frame. Light reaches about 200 m;
+    // below the mesopelagic the surface should be gone entirely and the only
+    // light is what lives here. So the surface's opacity ramps to zero between
+    // 200 m and 1,000 m of depth, and the god rays and caustics fade with it —
+    // all three are surface light, and none of them exists this deep.
+    const d = Math.abs(depth != null ? depth : -180);
+    const surfaceFade = 1 - THREE.MathUtils.clamp((d - 200) / 800, 0, 1);
+
+    if (this.waterSurface) {
+      this.waterSurface.material.uniforms.uOpacity.value = 0.5 * surfaceFade;
+      this.waterSurface.visible = surfaceFade > 0.01;
+    }
+    if (this.godRays) {
+      this.godRays.material.uniforms.uIntensity.value *= surfaceFade;
+      this.godRays.visible = surfaceFade > 0.02;
+    }
+    if (this.caustics) {
+      this.caustics.material.uniforms.uOpacity.value = 0.55 * surfaceFade;
+      this.caustics.visible = surfaceFade > 0.02;
     }
     if (this.snow) {
       this.snow.material.uniforms.uTime.value = elapsed;
