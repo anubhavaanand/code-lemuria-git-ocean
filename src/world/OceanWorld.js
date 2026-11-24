@@ -80,6 +80,18 @@ const isMobileDevice = () =>
   typeof navigator !== "undefined" &&
   /Android|iPhone|iPad|iPod|Mobile|Silk/i.test(navigator.userAgent);
 
+/**
+ * How far a station must stand from the viewer's own zone before its obelisk is
+ * built as full geometry.
+ *
+ * The city camera sits ~290 units out from the origin. An obelisk closer than
+ * this to the origin is inside the lens's working distance and reads as a wall
+ * rather than a landmark — London projects to (x −1, z +260), which is exactly
+ * that case. The station still exists and still glows at world zoom; only its
+ * full geometry is skipped.
+ */
+const NEAR_LANDMARK_CLEARANCE = 420;
+
 export function detectQuality() {
   if (typeof navigator === "undefined") return "high";
   if (isMobileDevice()) return "mobile";
@@ -115,6 +127,11 @@ export class OceanWorld {
 
     this.onSelect = opts.onSelect || (() => {});
     this.onLevelChange = opts.onLevelChange || (() => {});
+    // The camera's own depth, reported once per whole-metre change, so the HUD
+    // gauge reads the water the viewer is actually in rather than the viewer's
+    // label. Optional like every other callback.
+    this.onDepthChange = opts.onDepthChange || (() => {});
+    this._lastCamDepth = null;
     this.onReady = opts.onReady || (() => {});
 
     this.data = buildWorld();
@@ -256,20 +273,24 @@ export class OceanWorld {
   }
 
   _initLights() {
-    // Ambient: dim base of the water column. Not pure black — deep water still
-    // scatters some light, and pure black kills silhouette readability.
-    // Tuned by measuring rendered luminance per screen band: at 2.1 the
-    // sediment rendered at its full albedo (luma ~80) and the floor read as a
-    // flat bright slab instead of a receding plain.
-    this.scene.add(new THREE.AmbientLight(0x4a7c9e, 1.05));
+    // Ambient: the scattered light of the water column itself.
+    //
+    // Raised from 1.05. At that level anything not directly facing the sun —
+    // a tower's shaded side, the flanks of a whale, the sediment between ridges
+    // — fell to near-black against a 0x030b18 abyss, so the whole world read as
+    // silhouettes cut out of darkness. Deep water still scatters a great deal of
+    // light, and a diver at 1,200 m sees a soft blue-grey field, not a void. This
+    // is the term that turns the stage into water. The hemisphere and bounce
+    // lights carry the rest; this is the floor so nothing ever goes truly black.
+    this.scene.add(new THREE.AmbientLight(0x5a86a8, 1.55));
 
     // A hemisphere term stands in for the real thing: the surface above is
     // lit, the sediment below is not.
-    const hemi = new THREE.HemisphereLight(0x9fd8f5, 0x24384a, 0.85);
+    const hemi = new THREE.HemisphereLight(0x9fd8f5, 0x2a4256, 1.15);
     this.scene.add(hemi);
 
     // Sunlight filtering down through the surface.
-    const sun = new THREE.DirectionalLight(0xdaf1ff, 1.9);
+    const sun = new THREE.DirectionalLight(0xdaf1ff, 2.35);
     sun.position.set(-140, 420, 200);
     if (this.quality !== "low") {
       sun.castShadow = true;
@@ -296,18 +317,18 @@ export class OceanWorld {
     this.shadowQualityApplied = this.quality !== "low";
 
     // Cold bounce from the seafloor — the ground reflects, it isn't a void
-    const bounce = new THREE.DirectionalLight(0x3d84b0, 0.7);
+    const bounce = new THREE.DirectionalLight(0x4d94c0, 1.0);
     bounce.position.set(90, -260, -140);
     this.scene.add(bounce);
 
     // Faint warm rim from the front so whale backs separate from the water
-    const rim = new THREE.DirectionalLight(0xbfe8ff, 0.6);
+    const rim = new THREE.DirectionalLight(0xbfe8ff, 0.85);
     rim.position.set(160, 80, 340);
     this.scene.add(rim);
 
     // A wide, very soft fill from the camera side, so the near faces of the
     // towers and the sediment still read without lifting the whole scene.
-    const fill = new THREE.DirectionalLight(0x6fa8c8, 0.42);
+    const fill = new THREE.DirectionalLight(0x7fb4d4, 0.65);
     fill.position.set(60, 140, 520);
     this.scene.add(fill);
   }
@@ -431,10 +452,15 @@ export class OceanWorld {
     // Only build the nearest few as full geometry; the rest become lights.
     //
     // Placed by stationPosition(), which is an orthographic projection of real
-    // latitude and longitude. The old formula compressed the whole planet into a
-    // 14 x 141 box, which was invisible while an obelisk was only a landmark to
-    // look at and fatal the moment a tube had to run between two of them: every
-    // edge of the network shared almost the same midpoint.
+    // latitude and longitude. As a consequence one capital (London, which
+    // projects to x ≈ −1, z ≈ +260) stands at almost exactly the city camera's
+    // z. That is fine for the map — it is where London really is — but an
+    // obelisk forty units in front of the lens is a black column across the
+    // frame, not a landmark. So an obelisk whose station is closer to the
+    // viewer's own district than `NEAR_LANDMARK_CLEARANCE` is kept as a
+    // cluster light (visible at world/country zoom) and its full geometry is
+    // skipped. The map is unchanged; the city view simply does not start
+    // inside a monument.
     this.stations = [];
     for (const cluster of CAPITAL_CLUSTERS) {
       const p = stationPosition(cluster);
@@ -442,6 +468,12 @@ export class OceanWorld {
 
       const dz = Math.abs(depthToY(cluster.depth) - depthToY(this.you.depth));
       if (dz > 900 && !this.isMobile) continue;
+
+      // Distance from the viewer's own zone (x=0, z≈0) on the floor plane.
+      // Anything inside the clearance is too close to the city lens to draw in
+      // full and becomes a light instead.
+      const near = Math.hypot(p.x, p.z) < NEAR_LANDMARK_CLEARANCE;
+      if (near) continue;
 
       const obelisk = new SonarObelisk(cluster, opts);
       obelisk.group.position.set(p.x, seafloorHeightAt(p.x, p.z), p.z);
@@ -453,7 +485,11 @@ export class OceanWorld {
     const lights = buildClusterLights(CAPITAL_CLUSTERS, {
       max: this.isMobile ? 4 : 6,
     });
-    lights.position.set(0, SEAFLOOR_Y, LAYERS.farRidge - 80);
+    // No extra offset. `stationPosition()` already places every capital at its
+    // real spot on the floor; adding LAYERS.farRidge - 80 on top shifted the
+    // lights ~940 units behind the obelisks they are supposed to mark, so at
+    // world zoom you flew toward a glow and arrived at empty sediment. The
+    // lights and the obelisks now share one map.
     this.scene.add(lights);
     this.clusterLights = lights;
 
@@ -1377,8 +1413,12 @@ export class OceanWorld {
 
       // --- Environment ---
       // Guarded: `?only=whale` skips the water column entirely, so there is no
-      // ocean to update.
-      if (this.ocean) this.ocean.update(delta, t);
+      // ocean to update. The camera's depth is passed so the surface light can
+      // fade out below the sunlit zone — at −4,200 m there is no water surface
+      // overhead, and drawing one there was both false and a slab in the frame.
+      if (this.ocean) {
+        this.ocean.update(delta, t, this.rig.currentDepth || -180);
+      }
 
       // Fog is authored per zoom level (real metres), so the density is read
       // directly rather than recomputed from the depth value.
@@ -1579,15 +1619,46 @@ export class OceanWorld {
         this.onLevelChange(this.rig.level);
       }
 
+      // The depth readout follows the camera, not the identity.
+      //
+      // The HUD used to show `identity.depth` — the viewer's own fixed depth
+      // (−520 m) — at every zoom, so the gauge read −520 m whether you were at
+      // the world view or nose-to-nose with a whale. Depth is the spine of the
+      // 2.5D design and the single number that tells a viewer where in the water
+      // column they are, so it has to be the camera's depth, eased the same way
+      // the fog is so the number and the water agree. Quantised to whole metres
+      // and written only when it changes, so the loop does not re-render the HUD
+      // for a fraction of a metre.
+      const camDepth = Math.round(this.rig.currentDepth || 0);
+      if (camDepth !== this._lastCamDepth) {
+        this._lastCamDepth = camDepth;
+        if (typeof this.onDepthChange === "function") this.onDepthChange(camDepth);
+      }
+
       // --- Cluster lights: travelling shimmer ---
+      //
+      // The far-settlement beacons are a WORLD and COUNTRY device: at those
+      // zooms a capital is a light on the dark. Descend to the city — where a
+      // station is a landmark you are standing next to — and a 90-unit additive
+      // column is a wall of light in the lens, not a settlement. So the whole
+      // group fades out between the country and city bands and is hidden once
+      // there is no opacity left to see.
+      //
+      // Driven from the rig's continuous zoom position rather than the discrete
+      // level id, so the fade tracks the descent instead of popping at a
+      // boundary.
       if (this.clusterLights) {
+        const t = this.rig.t; // 0 = world, 1 = country, 2 = city
+        const fade = 1 - THREE.MathUtils.clamp((t - 0.9) / 0.9, 0, 1);
         const kids = this.clusterLights.children;
         for (let i = 0; i < kids.length; i++) {
           const m = kids[i].material;
           if (!m) continue;
+          if (m.userData.baseOpacity == null) m.userData.baseOpacity = m.opacity;
           const p = 0.5 + Math.sin(t * 0.8 + i * 0.9) * 0.5;
-          m.opacity = 0.1 + p * 0.2;
+          m.opacity = m.userData.baseOpacity * (0.7 + p * 0.3) * fade;
         }
+        this.clusterLights.visible = fade > 0.01;
       }
 
       // Read the CPU cost before rendering, so it measures the update loops and

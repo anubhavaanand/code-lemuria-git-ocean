@@ -66,6 +66,17 @@ export default function App() {
     const found = ZOOM_LEVELS.findIndex((l) => l.id === q);
     return found >= 0 ? q : "city";
   });
+  // The camera's own depth, mirrored into React so the gauge reads the water the
+  // viewer is in. Seeded from the starting level so the first paint is correct
+  // rather than zero.
+  const [cameraDepth, setCameraDepth] = useState(() => {
+    const q =
+      typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search).get("level")
+        : null;
+    const found = ZOOM_LEVELS.findIndex((l) => l.id === q);
+    return ZOOM_LEVELS[found >= 0 ? found : 2].depth;
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   // How far the live-data pass has got, or null while it is not running. Shown
@@ -82,6 +93,9 @@ export default function App() {
       instance = new OceanWorld(containerRef.current, {
         onSelect: (repo) => setSelectedRepo(repo),
         onLevelChange: (level) => setLevelId(level.id),
+        // The gauge follows the camera. Throttled at the source to whole metres,
+        // so this is a handful of state writes per descent, not per frame.
+        onDepthChange: (d) => setCameraDepth(d),
         onReady: () => setLoading(false),
         // `?nosculpt=1` leaves the procedural body in place so a screenshot can
         // be diffed against the sculpted one. Without it there is no way to tell
@@ -1133,6 +1147,7 @@ export default function App() {
           world={world}
           levels={ZOOM_LEVELS}
           activeLevelId={levelId}
+          cameraDepth={cameraDepth}
           onLevelChange={handleLevelPick}
           selectedRepo={selectedRepo}
           dataState={dataState}

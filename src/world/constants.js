@@ -64,9 +64,16 @@ export const COLORS = {
   holdfast: 0x4a3d31,
 
   // Seafloor
-  sediment: 0x2a3644,
-  sedimentLit: 0x415468,
-  basalt: 0x1e2731,
+  //
+  // Lifted. At 0x2a3644 / 0x415468 / 0x1e2731 the sediment rendered as a dark
+  // blue-grey plain and every boulder — 0x1e2731, lit by a dim key — fell to
+  // pure black, so the rock field read as holes punched in the floor rather
+  // than as stone. A seafloor lit by scattered water light is a mid-blue-grey,
+  // never black; these carry enough value that a shadowed face on a boulder is
+  // still visibly a face.
+  sediment: 0x3a4b5c,
+  sedimentLit: 0x577085,
+  basalt: 0x38434f,
 
   // Silicon wafer obelisk (wafer is a real semiconductor slice: mirror-polished)
   waferMirror: 0xdfe9f2,
@@ -116,6 +123,22 @@ export function depthToY(metres) {
 /** Height of the sediment surface. Towers stand on this. */
 export const SEAFLOOR_Y = 0;
 
+/**
+ * Height of the underside of the water surface, in world units.
+ *
+ * This is the ceiling of the world. Everything the camera sees lives below it,
+ * and the camera itself must never pass through it: a viewer at −4,200 m is
+ * below the surface, so a lens that rises above y = SURFACE_Y is not in the
+ * ocean any more — it is looking down through the water from the air, which
+ * reads as a bright slab across the top of the frame (the surface seen from
+ * above) and destroys the one claim the whole project makes, that you are
+ * diving in a real water column.
+ *
+ * The camera clamp in CameraRig reads this, so the world-level lens parks just
+ * under the surface rather than in the sky.
+ */
+export const SURFACE_Y = 420;
+
 export const LAYERS = {
   farRidge: -860, // distant landmass silhouette, dissolved in fog
   godRays: -800, // shafts of surface light, far back
@@ -148,12 +171,21 @@ export const ZOOM_LEVELS = [
     id: "world",
     label: "World",
     depth: -4200,
+    // The world view is a look ACROSS the basin from its centre.
+    //
+    // The six capitals span 261° of longitude and sit on a 900-unit ring, so
+    // they surround the middle of the map rather than lining up in front of
+    // you. `focusZ` moves the aim point to the ring's centre (-300, see
+    // stationPosition's zOffset) so the stations fan out left and right in one
+    // wide shot instead of piling into a strip on the far ridge. The lens stays
+    // under the surface (the CameraRig clamp caps it at SURFACE_Y - 6).
     focusY: 16,
+    focusZ: -300,
     distance: 1450,
-    height: 700,
-    fov: 62,
-    fog: 0.00095,
-    blurb: "Capital lights scattered across the ocean floor.",
+    height: 300,
+    fov: 72,
+    fog: 0.00062,
+    blurb: "The whole basin — capital lights across the ocean floor.",
   },
   {
     id: "country",
@@ -170,11 +202,16 @@ export const ZOOM_LEVELS = [
     id: "city",
     label: "City",
     depth: -1200,
-    focusY: 14,
-    distance: 330,
-    height: 150,
-    fov: 54,
-    fog: 0.00165,
+    // The city view read as a dark, empty stage: the fog was thick enough that
+    // the far towers dissolved before they could form a district, and the lens
+    // sat high enough that the near field was mostly unlit floor. A little less
+    // fog and a lower, closer eye brings the towers up into the frame as a
+    // neighbourhood instead of a scattering of sprigs in haze.
+    focusY: 20,
+    distance: 290,
+    height: 96,
+    fov: 56,
+    fog: 0.0013,
     blurb: "Language districts, kelp tower density, your own towers.",
   },
   {

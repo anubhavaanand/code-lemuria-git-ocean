@@ -16,7 +16,7 @@
  */
 
 import * as THREE from "three";
-import { ZOOM_LEVELS, LAYERS } from "./constants";
+import { ZOOM_LEVELS, LAYERS, SURFACE_Y } from "./constants";
 
 const clamp = THREE.MathUtils.clamp;
 
@@ -240,6 +240,14 @@ export class CameraRig {
       baseFocusY = follow.focusY;
     }
 
+    // The level's own depth on the Z axis, when it authors one.
+    //
+    // The capital ring straddles z = -300, so the world view aims at that
+    // centre rather than at the origin, which is the near edge of the basin.
+    // Blended between the two adjacent levels like every other authored value,
+    // so the descent from world to country is continuous.
+    let baseFocusZ = (a.focusZ || 0) + ((b.focusZ || 0) - (a.focusZ || 0)) * ease;
+
     if (follow && follow.position) {
       // When following a repo, track it in X/Z but keep the level's height so
       // the tower stays vertically framed instead of drifting out of shot.
@@ -249,7 +257,7 @@ export class CameraRig {
         follow.position.z
       );
     } else {
-      this.targetFocus.set(0, baseFocusY, 0);
+      this.targetFocus.set(0, baseFocusY, baseFocusZ);
     }
 
     if (immediate) {
@@ -360,7 +368,24 @@ export class CameraRig {
     // would make the colony unviewable.
     const clampedY = py;
 
-    this.camera.position.set(px, clampedY, pz);
+    // Never break the surface.
+    //
+    // The world-level lens, aiming at the floor from a 700-unit rise over 1,450
+    // units, lands at y ≈ 716 — 296 units ABOVE the water surface at
+    // SURFACE_Y = 420. From up there the surface is seen from above: a bright
+    // flat ceiling filling the top of the frame, the exact "crushed slab" the
+    // world view rendered. A diver at −4,200 m is under the water; the lens has
+    // to be too.
+    //
+    // The ceiling is SURFACE_Y rather than the level's own height because the
+    // surface is a world fact, not a camera choice. The clamp is soft — it only
+    // ever lowers the eye, so every level that already sat below the surface is
+    // untouched, and the world level is the only one it moves. `SURFACE_Y - 6`
+    // keeps the lens a hair under the sheet so the underside is in view.
+    const ceiling = SURFACE_Y - 6;
+    const eyeY = Math.min(clampedY, ceiling);
+
+    this.camera.position.set(px, eyeY, pz);
     this.camera.fov = fov;
     this.camera.updateProjectionMatrix();
     this.camera.lookAt(this.focus);

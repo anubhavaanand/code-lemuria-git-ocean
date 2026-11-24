@@ -218,9 +218,22 @@ export const STATION_RING_RADIUS = 900;
  * from the equator warrants. On this set it is the difference between a ring
  * and a smear.
  *
- * The `z` offset pushes the whole ring behind the user's own zone, which sits
- * at LAYERS.kelpForestMid. A capital in front of the viewer's own repositories
- * would occlude the one part of the scene that is about them.
+ * A ring, centred behind the viewer's zone.
+ *
+ * The capitals are placed by a true orthographic projection — no folding, no
+ * mirroring — because the relative geography is the meaning. What changes is
+ * where the camera looks from: the six capitals span about 261° of longitude,
+ * so they genuinely encircle the map's centre and no rotation can put them all
+ * on one side of a viewer standing at the edge. The world level therefore looks
+ * from the CENTRE of the ring (see `focusZ` on the world zoom level), which is
+ * what "the whole basin" means: the stations surround you, each a lit
+ * settlement on the floor.
+ *
+ * This replaces a version that mirrored the front hemisphere to the back. That
+ * did keep every station behind the city camera, but it silently rewrote the
+ * map — Beijing and Tokyo swapped hemispheres, and the network's edges
+ * connected cities that are no longer near each other. Folding geography to
+ * suit a camera is the wrong trade; move the camera.
  */
 export function stationPosition(cluster, opts = {}) {
   const radius = opts.radius != null ? opts.radius : STATION_RING_RADIUS;
