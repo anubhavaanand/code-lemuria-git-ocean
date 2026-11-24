@@ -37,6 +37,24 @@ export default function App() {
    */
   const liveIssuesRef = useRef([]);
 
+  // `?bare=1` hides the HUD and the loading veil.
+  //
+  // A screenshot pass is the only honest way to judge the animal at whale zoom,
+  // and the chrome is laid out around the edges for a reason: the header, the
+  // zoom rail and the readout all sit over the water where the whale swims, so a
+  // review of the silhouette through the HUD is a review of the HUD. This is the
+  // capture harness's switch, not a user-facing mode — it exists so a frame can
+  // be compared against the render without the interface in the way.
+  //
+  // Read ONCE, in a state initialiser, like `levelId` below. The query string is
+  // fixed for the life of the page, so parsing it in the render body re-parsed
+  // the same URL on every render — and this was the only flag here that did.
+  const [bare] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("bare") === "1"
+  );
+
   const [world, setWorld] = useState(null);
   const [selectedRepo, setSelectedRepo] = useState(null);
   const [levelId, setLevelId] = useState(() => {
@@ -210,6 +228,37 @@ export default function App() {
               : null,
             bodyLength: Number(w.length.toFixed(2)),
             girth: Number(w.girth.toFixed(2)),
+            // The framing inputs, so a "the whale is cropped" report can be
+            // checked against the numbers the camera actually solved from
+            // rather than argued from a picture. `focusLength` is what the
+            // whale-level distance is derived from; when it is null the rig fell
+            // back to its default and framed an 18-unit animal.
+            focusLength: instance.focusLength != null ? Number(instance.focusLength.toFixed(2)) : null,
+            focusOrbitY: instance.focusOrbitY != null ? Number(instance.focusOrbitY.toFixed(2)) : null,
+            selectedId: instance.selectedId || null,
+            focusPoint: instance.focusPoint
+              ? [
+                  Number(instance.focusPoint.x.toFixed(1)),
+                  Number(instance.focusPoint.y.toFixed(1)),
+                  Number(instance.focusPoint.z.toFixed(1)),
+                ]
+              : null,
+            // The framing distance, and WHY it is null when it is.
+            //
+            // `_follow()` is the exact function the camera solves from, so this
+            // is the number a "the whale is cropped" report is checked against.
+            // It used to swallow any throw into a bare `null`, which made
+            // "framing failed" indistinguishable from "nothing selected" —
+            // the one distinction this census exists to make. A throw now
+            // reports its message instead of vanishing.
+            followDistance: (() => {
+              try {
+                const f = instance._follow();
+                return f && f.distance != null ? Number(f.distance.toFixed(2)) : null;
+              } catch (e) {
+                return `threw: ${(e && e.message) || String(e)}`;
+              }
+            })(),
             nodes: (() => {
               let n = 0;
               w.group.traverse(() => n++);
@@ -472,6 +521,8 @@ export default function App() {
         }
         const payload = {
           level: instance.rig.levelId,
+          focusLength: instance.focusLength != null ? Number(instance.focusLength.toFixed(2)) : null,
+          selectedId: instance.selectedId || null,
           camera: [
             Number(instance.camera.position.x.toFixed(0)),
             Number(instance.camera.position.y.toFixed(0)),
@@ -1077,19 +1128,21 @@ export default function App() {
     <div className="go-root">
       <div ref={containerRef} className="go-canvas" />
 
-      <HUD
-        world={world}
-        levels={ZOOM_LEVELS}
-        activeLevelId={levelId}
-        onLevelChange={handleLevelPick}
-        selectedRepo={selectedRepo}
-        dataState={dataState}
-        onClearSelection={handleCloseCard}
-        onDismiss={handleClearSelection}
-        onFlyTo={handleFlyTo}
-      />
+      {!bare && (
+        <HUD
+          world={world}
+          levels={ZOOM_LEVELS}
+          activeLevelId={levelId}
+          onLevelChange={handleLevelPick}
+          selectedRepo={selectedRepo}
+          dataState={dataState}
+          onClearSelection={handleCloseCard}
+          onDismiss={handleClearSelection}
+          onFlyTo={handleFlyTo}
+        />
+      )}
 
-      {loading && (
+      {loading && !bare && (
         <div className="go-loading" role="status" aria-live="polite">
           <div className="go-loading-mark" aria-hidden="true">
             ◈

@@ -44,3 +44,10 @@ context/
 # GithubCity is here to learn how its world is made interactive; none of it is
 # shipped, so it must never enter this repo's history.
 .reference/
+
+# Capture harness scratch — a headless Chrome profile and the frames it writes.
+# They are QA input, not source: a profile is megabytes of cache, and a capture
+# is a binary that says nothing a committed test does not.
+.chrome-home/
+.chrome-prof/
+.tmp/
