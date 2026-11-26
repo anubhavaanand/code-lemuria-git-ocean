@@ -1,6 +1,10 @@
 /**
  * Git Ocean — World constants
  *
+ * Re-themed to deep-ocean GitCity style: one seafloor, properly structured 3D,
+ * GitHub info and endpoints shown as ocean animals with different animals per
+ * data type.
+ *
  * Per the Git Ocean Constitution:
  *  - Scientific Accuracy: every element explainable by marine biology / engineering
  *  - Stylized Realism: deep blue, bioluminescent glow, smooth forms (Bruno Simon benchmark)
@@ -8,25 +12,30 @@
  *  - Phase Architecture: Phase 1 = personal dashboard (read-only)
  *  - Creature Group Integrity: 7 groups, all data points mapped
  *
- * Depth is expressed in metres. Negative Y = below the surface (y = 0).
- * The scene is a 2.5D layered cross-section: real depth spacing, real fog
- * attenuation, real parallax between layers.
+ * Coordinate system — one true 3D space, one floor:
+ *   X  lateral position across the seafloor
+ *   Y  height above the seafloor (SEAFLOOR_Y = 0 is the single floor)
+ *   Z  depth into the water column (camera sits at +Z looking toward -Z)
+ *
+ * This replaces the earlier 2.5D layered cross-section (where LAYERS owned Z
+ * and the camera dolled through stacked bands) with a single seafloor and real
+ * 3D depth: towers grow up from Y=0, whales orbit in the water column above,
+ * and the camera frames them in true perspective depth.
  */
 
 // ---------------------------------------------------------------------------
-// Palette
+// Palette — deep ocean, not space. No near-black background, no stars.
+// Surface light filters from above; bioluminescence carries the dark.
 // ---------------------------------------------------------------------------
 
 export const COLORS = {
-  // Water column, darkest at depth. Raised from the first prototype: at
-  // 0x00060f the deep water read as pure black on every display and the
-  // scene lost all separation between geometry and water.
-  abyss: 0x030b18,
-  midnight: 0x061a30,
-  deep: 0x0a2b48,
-  mid: 0x0d4a70,
-  shallow: 0x14709e,
-  surfaceGlow: 0x3aa8cf,
+  // Water column — deep ocean gradient, darkest at depth but never pure black.
+  abyss: 0x02050a,      // deepest water — very dark blue, not black
+  midnight: 0x040e1e,   // bathypelagic
+  deep: 0x081c33,       // mesopelagic lower
+  mid: 0x0b3355,        // mesopelagic upper
+  shallow: 0x0f557a,    // near-surface water
+  surfaceGlow: 0x2d8fc0, // where surface light enters
 
   // Bioluminescence (real: dinoflagellates, ostracods, lanternfish)
   biolumCyan: 0x4deaff,
@@ -37,26 +46,12 @@ export const COLORS = {
   biolumRed: 0xff6b6b,
 
   // Whale skin (counter-shaded, like real cetaceans)
-  //
-  // Lifted a long way from the first pass (0x2a4a70 / 0x4d80a6 / 0xc2d9e6). At
-  // those values a whale measured 76-105 luminance against water at 14-18 — it
-  // was technically rendering and technically unreadable, and a visual QA pass
-  // looking straight at the frame reported "no whale present at all". The fault
-  // was not geometry or scale; it was that the animal's own colour sat within a
-  // few code points of the water it swims in.
-  //
-  // A humpback is not blue-grey in life. It is a dark slate back over a
-  // near-white belly with a mottled grey flank, and that pale underside is the
-  // single brightest thing about it. So the dorsal stays dark and cool (it must
-  // still read as a silhouette from below), but the lateral and ventral tones
-  // are now genuinely pale, which is both accurate and what separates the body
-  // from the water column.
   whaleDorsal: 0x18304a,
   whaleLateral: 0x8fb6cf,
   whaleVentral: 0xf2f8fb,
   whaleScar: 0xffffff,
 
-  // Kelp / flora — brighter so the towers read against the water
+  // Kelp / flora — brighter so towers read against deep water
   kelpStipeDark: 0x24543a,
   kelpStipe: 0x3d8a4d,
   kelpBlade: 0x52a85c,
@@ -64,18 +59,11 @@ export const COLORS = {
   holdfast: 0x4a3d31,
 
   // Seafloor
-  //
-  // Lifted. At 0x2a3644 / 0x415468 / 0x1e2731 the sediment rendered as a dark
-  // blue-grey plain and every boulder — 0x1e2731, lit by a dim key — fell to
-  // pure black, so the rock field read as holes punched in the floor rather
-  // than as stone. A seafloor lit by scattered water light is a mid-blue-grey,
-  // never black; these carry enough value that a shadowed face on a boulder is
-  // still visibly a face.
-  sediment: 0x3a4b5c,
-  sedimentLit: 0x577085,
-  basalt: 0x38434f,
+  sediment: 0x1d2630,
+  sedimentLit: 0x324254,
+  basalt: 0x141b22,
 
-  // Silicon wafer obelisk (wafer is a real semiconductor slice: mirror-polished)
+  // Silicon wafer obelisk (community landmark + metro base)
   waferMirror: 0xdfe9f2,
   waferEdge: 0x8fa8bd,
   waferRaw: 0x5c6b7a,
@@ -88,18 +76,28 @@ export const COLORS = {
 };
 
 // ---------------------------------------------------------------------------
-// Depth zones (real oceanographic layers)
+// One floor — the single seafloor everything stands on.
 // ---------------------------------------------------------------------------
 
+export const SEAFLOOR_Y = 0;
+
+/** Height of the water surface above the seafloor. Camera ceiling for deep dives. */
+export const SURFACE_Y = 420;
+
+/**
+ * Depth zones (real oceanographic layers), now expressed as Y height above the
+ * single seafloor rather than as separate Z bands. The water column is one
+ * continuous 3D volume.
+ */
 export const DEPTH = {
-  sunlight: { min: 0, max: -200, label: "Epipelagic", fog: 0.0016 },
-  twilight: { min: -200, max: -1000, label: "Mesopelagic", fog: 0.0026 },
-  midnight: { min: -1000, max: -4000, label: "Bathypelagic", fog: 0.0042 },
-  abyss: { min: -4000, max: -6000, label: "Abyssopelagic", fog: 0.0060 },
-  hadal: { min: -6000, max: -11000, label: "Hadal", fog: 0.0085 },
+  sunlight: { min: 0, max: 200, label: "Epipelagic", fog: 0.0016 },
+  twilight: { min: 200, max: 1000, label: "Mesopelagic", fog: 0.0026 },
+  midnight: { min: 1000, max: 4000, label: "Bathypelagic", fog: 0.0042 },
+  abyss: { min: 4000, max: 6000, label: "Abyssopelagic", fog: 0.0060 },
+  hadal: { min: 6000, max: 11000, label: "Hadal", fog: 0.0085 },
 };
 
-/** Convert a real depth in metres to scene Y units. */
+/** Convert a real depth in metres to scene Y units above the seafloor. */
 export const Y_PER_METRE = 0.01;
 
 export function depthToY(metres) {
@@ -107,120 +105,69 @@ export function depthToY(metres) {
 }
 
 // ---------------------------------------------------------------------------
-// Coordinate system — one system, used everywhere
-//
-//   X  lateral position inside a band
-//   Y  height. The seafloor sits at SEAFLOOR_Y; everything grows upward (+Y).
-//   Z  depth ordering. The camera sits at +Z looking toward -Z. Each band owns
-//      a Z slice, so a camera dolly through Z *is* the zoom, and parallax
-//      between bands is real parallax rather than a painted effect.
-//
-// This is the fix for the earlier drift: environment modules were reading
-// LAYERS as Y while the scene assembly read it as Z. Both are Z now, and the
-// only vertical constant is SEAFLOOR_Y.
+// One floor layers — collapsed from the earlier 2.5D band stack (-860..260)
+// into a single coherent set of 3D positions above the seafloor.
 // ---------------------------------------------------------------------------
 
-/** Height of the sediment surface. Towers stand on this. */
-export const SEAFLOOR_Y = 0;
-
-/**
- * Height of the underside of the water surface, in world units.
- *
- * This is the ceiling of the world. Everything the camera sees lives below it,
- * and the camera itself must never pass through it: a viewer at −4,200 m is
- * below the surface, so a lens that rises above y = SURFACE_Y is not in the
- * ocean any more — it is looking down through the water from the air, which
- * reads as a bright slab across the top of the frame (the surface seen from
- * above) and destroys the one claim the whole project makes, that you are
- * diving in a real water column.
- *
- * The camera clamp in CameraRig reads this, so the world-level lens parks just
- * under the surface rather than in the sky.
- */
-export const SURFACE_Y = 420;
-
 export const LAYERS = {
-  farRidge: -860, // distant landmass silhouette, dissolved in fog
-  godRays: -800, // shafts of surface light, far back
-  caustics: -740, // animated light pattern on the sediment
-  marineSnow: -620, // the constant fall of detritus
-  kelpForestFar: -430,
-  obelisk: -340, // the community landmark, behind the user's zone
-  ambientFar: -280,
-  whaleFar: -230,
-  kelpForestMid: -170,
-  creatures: -120,
-  whaleNear: -20,
-  kelpForestNear: 60,
-  creaturesNear: 130,
-  ambientNear: 190,
+  // Distant ridgeline at the back of the basin
+  farRidge: -900,
+  // Surface light shafts, far back in the volume
+  godRays: -700,
+  // Caustic light pattern on the sediment
+  caustics: -550,
+  // Marine snow volume
+  marineSnow: -400,
+  // Followed repos (far district)
+  kelpForestFar: -220,
+  // Community landmark (obelisk), behind the user's zone
+  obelisk: -140,
+  // Ambient towers (anonymous GitHub mass)
+  ambientFar: -90,
+  // Far whales
+  whaleFar: -50,
+  // User's own repos (near district)
+  kelpForestMid: -10,
+  // Water-column creatures
+  creatures: 25,
+  // Near whales
+  whaleNear: 65,
+  // Near kelp forest
+  kelpForestNear: 110,
+  // Near creatures
+  creaturesNear: 155,
+  // Ambient near schools
+  ambientNear: 200,
+  // UI overlay plane
   ui: 260,
 };
 
 // ---------------------------------------------------------------------------
-// Camera — five zoom levels, each revealing a new layer of meaning
+// Camera — three zoom levels on one floor, true 3D perspective depth.
 //
-// `depth` is a real ocean depth in metres, used only for the HUD readout and
-// for fog. `focusY`, `distance`, `height` are scene units and are what actually
-// position the camera, so the two never have to agree — which is what made the
-// old rig fly the camera to nonsense heights.
+// `depth` is a real ocean depth (HUD readout + fog). `distance`, `height`,
+// `focusY` are scene units in true 3D space above the single seafloor.
 // ---------------------------------------------------------------------------
 
 export const ZOOM_LEVELS = [
   {
-    id: "world",
-    label: "World",
+    id: "deep",
+    label: "Deep",
     depth: -4200,
-    // The world view is a look ACROSS the basin from its centre.
-    //
-    // The six capitals span 261° of longitude and sit on a 900-unit ring, so
-    // they surround the middle of the map rather than lining up in front of
-    // you. `focusZ` moves the aim point to the ring's centre (-300, see
-    // stationPosition's zOffset) so the stations fan out left and right in one
-    // wide shot instead of piling into a strip on the far ridge. The lens stays
-    // under the surface (the CameraRig clamp caps it at SURFACE_Y - 6).
-    focusY: 16,
-    focusZ: -300,
-    distance: 1450,
-    height: 300,
-    fov: 72,
-    fog: 0.00062,
-    blurb: "The whole basin — capital lights across the ocean floor.",
-  },
-  {
-    id: "country",
-    label: "Country",
-    depth: -2400,
-    focusY: 16,
-    distance: 780,
-    height: 380,
-    fov: 58,
-    fog: 0.00125,
-    blurb: "One capital station, its city pockets becoming legible.",
-  },
-  {
-    id: "city",
-    label: "City",
-    depth: -1200,
-    // The city view read as a dark, empty stage: the fog was thick enough that
-    // the far towers dissolved before they could form a district, and the lens
-    // sat high enough that the near field was mostly unlit floor. A little less
-    // fog and a lower, closer eye brings the towers up into the frame as a
-    // neighbourhood instead of a scattering of sprigs in haze.
-    focusY: 20,
-    distance: 290,
-    height: 96,
-    fov: 56,
-    fog: 0.0013,
-    blurb: "Language districts, kelp tower density, your own towers.",
+    focusY: 120,
+    distance: 1600,
+    height: 700,
+    fov: 62,
+    fog: 0.00095,
+    blurb: "The whole basin — capital lights and tower districts across the seafloor.",
   },
   {
     id: "tower",
     label: "Tower",
     depth: -520,
-    focusY: 18,
-    distance: 92,
-    height: 44,
+    focusY: 40,
+    distance: 110,
+    height: 55,
     fov: 48,
     fog: 0.00215,
     blurb: "A single repo tower — its whale and orbital creatures.",
@@ -229,20 +176,9 @@ export const ZOOM_LEVELS = [
     id: "whale",
     label: "Whale",
     depth: -180,
-    // The whale orbits at 0.58 x tower height, so for a large repo the animal
-    // sits ~78 units up while the old focusY of 20 aimed the lens at the
-    // tower's ankles. The whale then crossed the top of the frame and spent part
-    // of its orbit above the lens entirely — which is exactly what a visual QA
-    // pass reported: "no whale present at all", while the whale was in fact
-    // rendering, just above the top edge. Framing the middle of the tower is
-    // what keeps the whole orbit in shot, whatever the repo's size.
-    focusY: 16,
-    distance: 62,
-    // Height is what tilts the lens down onto the orbit. At 20 the camera looked
-    // only 8 degrees down, which put the near side of the orbit above the frame;
-    // at 58 it looks 15 degrees down and the orbit stays inside the frame at
-    // every orbital phase, for every size of repo.
-    height: 58,
+    focusY: 20,
+    distance: 72,
+    height: 16,
     fov: 42,
     fog: 0.0028,
     blurb: "The whole repo as an animal. Every data point visible.",
@@ -250,7 +186,9 @@ export const ZOOM_LEVELS = [
 ];
 
 // ---------------------------------------------------------------------------
-// Orbital planes — Keplerian, innermost to outermost
+// Orbital planes — Keplerian, innermost to outermost. One plane per creature
+// group, mapped to GitHub data types (Builders = commits, Admirers = stars,
+// Problems = issues, Offspring = forks, Resolutions = pull requests).
 // ---------------------------------------------------------------------------
 
 export const ORBITAL_PLANES = {
@@ -374,10 +312,6 @@ export const DEFAULT_SONG = { base: 123.5, wobble: 0.2, timbre: "neutral" };
 // Language colour — GitHub linguist palette
 // ---------------------------------------------------------------------------
 
-/**
- * The canonical per-language colour. Mirrors the GitHub linguist palette so a
- * tower's hue is instantly recognisable as its language.
- */
 export const LANGUAGE_COLORS = {
   JavaScript: 0xf1e05a,
   TypeScript: 0x3178c6,
@@ -396,11 +330,9 @@ export const LANGUAGE_COLORS = {
 
 export const DEFAULT_LANGUAGE_COLOR = 0x8b9bb0;
 
-/** Resolve a language name to a hex colour int. */
 export function languageStyleColor(language) {
   if (!language) return DEFAULT_LANGUAGE_COLOR;
   if (LANGUAGE_COLORS[language] != null) return LANGUAGE_COLORS[language];
-  // Case-insensitive fallback so "javascript" still resolves
   const key = Object.keys(LANGUAGE_COLORS).find(
     (k) => k.toLowerCase() === String(language).toLowerCase()
   );
@@ -411,39 +343,15 @@ export function languageStyleColor(language) {
 // Scale helpers
 // ---------------------------------------------------------------------------
 
-/** Tower height in scene units from commit count. */
 export function towerHeight(repo) {
   const commits = repo.totalCommits || repo.commitFrequency * 52 || 200;
   return 6 + Math.sqrt(commits) * 1.15;
 }
 
-/** Tower girth from contributor count. */
 export function towerGirth(repo) {
   return 0.55 + Math.sqrt(Math.max(1, repo.contributors || 1)) * 0.22;
 }
 
-/**
- * Whale body length in scene units, derived from commit count.
- *
- * The scale is load-bearing, not cosmetic. A whale orbits its tower at about
- * 0.7 x the tower height, and tower height runs 6..~165 units across a realistic
- * range of repositories. Deriving the whale from the *same* quantity as the
- * tower keeps the two proportionate everywhere, so the animal always reads as
- * something that belongs to that particular tower.
- *
- * Why commits and not codebase size (this used to be 5 + sqrt(KB)*0.18): a
- * tower's height is already commit history and its girth is contributors, so a
- * whale scaled by bytes drifted independently of the thing it circles. A 340 KB
- * repo with 1,240 commits (ky) got an 8-unit whale beside a 46-unit tower — a
- * minnow next to a redwood, which is unreadable on screen and wrong in the
- * world. Commit count makes whale size track tower height at every scale, from
- * a hobby repo to a 162-unit flagship.
- *
- * 0.28 is the ratio a humpback actually has: an adult is ~14 m, and a mature
- * kelp tower is ~45 m. It is also the ratio that keeps the animal legible — at
- * the whale zoom the camera pulls back in proportion to the orbit radius, so the
- * whale lands on screen at 200-660 px depending on the size of the repo.
- */
 export function whaleLength(repo) {
   const commits = repo.totalCommits || repo.commitFrequency * 52 || 200;
   return 0.28 * towerHeight(repo);
