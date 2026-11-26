@@ -47,6 +47,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Lint before tests: it is seconds, and it catches classes of defect the
+      # suite cannot — an undefined reference on a branch no test exercises, a
+      # hook called after an early return.
+      - name: Lint
+        run: npm run lint
+
       - name: Run tests
         run: npm test
 
