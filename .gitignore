@@ -51,3 +51,9 @@ context/
 .chrome-home/
 .chrome-prof/
 .tmp/
+
+# Agent worktree scaffolding — sibling checkouts an agent creates under .claude/
+# to work several branches at once. Each one is a full copy of this repository
+# (src, dist, node_modules links), so committing it would duplicate the tree
+# inside itself and recurse on every agent run.
+.claude/
