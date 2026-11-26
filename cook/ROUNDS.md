@@ -156,7 +156,7 @@ Top gaps from critics:
 
 Progress note sent: [none yet]
 Stop check: bar [no] | floor [no] | stills approved [no] | final checked [no] -> next round
-Next focus: Create git branch, commit all changes, open PR #24, document changes in PR description.
+Next focus: Open PR #24, document all changes in PR description.
 
 ---
 
@@ -177,3 +177,24 @@ Measured (command and result):
 
 Stop check: bar [no] | floor [no] | stills approved [no] | final checked [no] -> PR opened
 Next focus: Open PR #24, document all changes in PR description.
+
+---
+
+## Round 5 — Ship complete
+
+Time: 00:12 to 00:16 IST | total elapsed 0.43h
+Usage: ~8.6% of window
+Focus: PR #25 opened; branch pushed; working tree clean except cook/ and .claude/ (both untracked working state).
+
+Changes:
+- `feat/deep-ocean-visuals` pushed to origin
+- PR #25 opened: https://github.com/anubhavanand/code-lemuria-git-ocean/pull/25
+- All 6 source files committed (546dc59)
+
+Stills: cook/stills/r01/ | Side by side: cook/compare/r01/
+
+Measured (command and result):
+- `npm run build`: passes (1,136KB JS, 3.18s)
+
+Stop check: bar [no] | floor [no] | stills approved [no] | final checked [no] -> complete for now
+Next focus: Await user review of stills/PR; user said "ill worry about providing" references and "sure ill review them afterwards".
