@@ -1,18 +1,17 @@
 /**
- * Git Ocean — Ocean environment
+ * Git Ocean — Ocean environment (deep-ocean, one floor)
  *
- * Builds the layered 2.5D backdrop. Every layer sits at a real depth so fog
- * and parallax do the work of a 3D world without the cost.
+ * Builds the deep-ocean backdrop for a single seafloor world: water-column
+ * gradient, surface light shafts (god rays), caustics on the sediment,
+ * marine snow, and the distant ridgeline. Everything sits in one true 3D
+ * volume above SEAFLOOR_Y, not in stacked 2.5D bands.
  *
- * Layer stack (back to front), all at LAYERS[*] depth:
- *   caustics → godRays → farRidge → marineSnow → kelpForestFar
- *   → obelisk → ambientFar → whaleFar → kelpForestMid
- *   → creatures → seafloor → whaleNear → kelpForestNear
- *   → creaturesNear → ambientNear
+ * Layer stack (back to front), all positioned in 3D space above the seafloor:
+ *   gradient → farRidge → godRays → caustics → marineSnow → waterSurface
  */
 
 import * as THREE from "three";
-import { COLORS, LAYERS, SURFACE_Y } from "./constants";
+import { COLORS, LAYERS, SEAFLOOR_Y } from "./constants";
 import {
   causticsVertex,
   causticsFragment,
@@ -27,8 +26,9 @@ import {
 } from "./shaders";
 
 /**
- * The whole environment: sky/water gradient, caustic floor, god rays,
- * surface seen from below, marine snow, and the distant ridge.
+ * The whole deep-ocean environment: water gradient, god rays from the surface,
+ * caustic floor light, marine snow, water surface seen from below, and the
+ * distant ridgeline.
  */
 export class OceanEnvironment {
   constructor(scene, opts = {}) {
@@ -43,34 +43,28 @@ export class OceanEnvironment {
     this.disposables = [];
 
     this.buildGradient();
-    this.buildCaustics();
-    this.buildGodRays();
-    this.buildWaterSurface();
-    this.buildMarineSnow();
     this.buildFarRidge();
-    this.buildHorizon();
+    this.buildGodRays();
+    this.buildCaustics();
+    this.buildMarineSnow();
+    this.buildWaterSurface();
   }
 
   // -------------------------------------------------------------------------
-  // Water column gradient — a full-screen backdrop plane far behind everything.
-  // Deep blue at the bottom, lighter toward the surface. This is what gives the
+  // Water column gradient — a full-screen backdrop plane behind everything.
+  // Deep abyss at the bottom, lighter toward the surface. This gives the
   // scene its depth cue even where there's no geometry.
   // -------------------------------------------------------------------------
   buildGradient() {
     const geo = new THREE.PlaneGeometry(1, 1);
     const mat = new THREE.ShaderMaterial({
-      // MUST stay opaque. A transparent full-screen quad lands in three.js's
-      // transparent pass, which runs AFTER all opaque geometry and ignores
-      // depth when depthTest is off — so it painted straight over the
-      // seafloor, towers and rocks and the whole world went black below the
-      // surface band. Opaque + renderOrder -1000 draws it first, then
-      // everything else paints on top of it.
+      // Opaque so it paints first and everything else draws on top.
       transparent: false,
       depthWrite: false,
       depthTest: false,
       uniforms: {
-        uColorTop: { value: new THREE.Color(COLORS.shallow) },
-        uColorMid: { value: new THREE.Color(COLORS.deep) },
+        uColorTop: { value: new THREE.Color(COLORS.surfaceGlow) },
+        uColorMid: { value: new THREE.Color(COLORS.mid) },
         uColorBottom: { value: new THREE.Color(COLORS.abyss) },
         uTime: { value: 0 },
       },
@@ -94,9 +88,8 @@ export class OceanEnvironment {
         }
 
         void main() {
-          float d = vUv.y; // 0 at bottom, 1 at top
+          float d = vUv.y; // 0 at bottom (abyss), 1 at top (surface)
 
-          // Three-stop vertical gradient
           vec3 col = mix(uColorBottom, uColorMid, smoothstep(0.0, 0.55, d));
           col = mix(col, uColorTop, smoothstep(0.45, 1.0, d));
 
@@ -116,6 +109,72 @@ export class OceanEnvironment {
     this.gradient.frustumCulled = false;
     this.gradient.renderOrder = -1000;
     this.group.add(this.gradient);
+    this.disposables.push(geo, mat);
+  }
+
+  // -------------------------------------------------------------------------
+  // Far ridge — distant ridgeline silhouette at the back of the basin.
+  // -------------------------------------------------------------------------
+  buildFarRidge() {
+    const geo = new THREE.PlaneGeometry(2600, 520);
+    const mat = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      uniforms: {
+        uColorTop: { value: new THREE.Color(COLORS.sediment) },
+        uColorBottom: { value: new THREE.Color(COLORS.abyss) },
+        uOpacity: { value: 0.75 },
+      },
+      vertexShader: ridgeVertex,
+      fragmentShader: ridgeFragment,
+    });
+
+    this.farRidge = new THREE.Mesh(geo, mat);
+    this.farRidge.position.set(0, 180, LAYERS.farRidge);
+    this.farRidge.renderOrder = -880;
+    this.group.add(this.farRidge);
+    this.disposables.push(geo, mat);
+
+    // Second, nearer ridge for parallax depth
+    const geo2 = new THREE.PlaneGeometry(2200, 400);
+    const mat2 = mat.clone();
+    mat2.uniforms = THREE.UniformsUtils.clone(mat.uniforms);
+    mat2.uniforms.uColorTop.value = new THREE.Color(0x0a121c);
+    mat2.uniforms.uOpacity.value = 0.85;
+
+    this.midRidge = new THREE.Mesh(geo2, mat2);
+    this.midRidge.position.set(180, 140, LAYERS.farRidge + 260);
+    this.midRidge.renderOrder = -870;
+    this.group.add(this.midRidge);
+    this.disposables.push(geo2, mat2);
+  }
+
+  // -------------------------------------------------------------------------
+  // God rays — light shafts from the surface, filtering down through the
+  // water column. Positioned far back so they read as distant surface light.
+  // -------------------------------------------------------------------------
+  buildGodRays() {
+    const geo = new THREE.PlaneGeometry(2400, 1400);
+    const mat = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+      uniforms: {
+        uTime: { value: 0 },
+        uColor: { value: new THREE.Color(COLORS.biolumCyan) },
+        uIntensity: { value: 0.5 },
+        uSurfaceY: { value: 420 },
+        uFloorY: { value: SEAFLOOR_Y },
+      },
+      vertexShader: godRaysVertex,
+      fragmentShader: godRaysFragment,
+    });
+
+    this.godRays = new THREE.Mesh(geo, mat);
+    this.godRays.position.set(0, 180, LAYERS.godRays);
+    this.godRays.renderOrder = -860;
+    this.group.add(this.godRays);
     this.disposables.push(geo, mat);
   }
 
@@ -144,72 +203,9 @@ export class OceanEnvironment {
 
     this.caustics = new THREE.Mesh(geo, mat);
     this.caustics.rotation.x = -Math.PI / 2;
-    // Lies flat on the sediment, stretched back into the fog
-    this.caustics.position.set(0, 0.6, LAYERS.caustics);
-    this.caustics.renderOrder = -900;
+    this.caustics.position.set(0, SEAFLOOR_Y + 0.6, LAYERS.caustics);
+    this.caustics.renderOrder = -840;
     this.group.add(this.caustics);
-    this.disposables.push(geo, mat);
-  }
-
-  // -------------------------------------------------------------------------
-  // God rays — light shafts from the surface, in front of the far ridge.
-  // -------------------------------------------------------------------------
-  buildGodRays() {
-    const geo = new THREE.PlaneGeometry(2400, 1400);
-    const mat = new THREE.ShaderMaterial({
-      transparent: true,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      side: THREE.DoubleSide,
-      uniforms: {
-        uTime: { value: 0 },
-        uColor: { value: new THREE.Color(COLORS.biolumCyan) },
-        uIntensity: { value: 0.5 },
-        uSurfaceY: { value: 420 },
-        uFloorY: { value: 0 },
-      },
-      vertexShader: godRaysVertex,
-      fragmentShader: godRaysFragment,
-    });
-
-    this.godRays = new THREE.Mesh(geo, mat);
-    // Centred between the surface and the floor, sitting well behind the towers
-    this.godRays.position.set(0, 150, LAYERS.godRays);
-    this.godRays.renderOrder = -880;
-    this.group.add(this.godRays);
-    this.disposables.push(geo, mat);
-  }
-
-  // -------------------------------------------------------------------------
-  // Water surface — seen from below, at the very top of the frame.
-  // -------------------------------------------------------------------------
-  buildWaterSurface() {
-    const geo = new THREE.PlaneGeometry(3000, 1600, 90, 48);
-    const mat = new THREE.ShaderMaterial({
-      transparent: true,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-      uniforms: {
-        uTime: { value: 0 },
-        uColorShallow: { value: new THREE.Color(COLORS.surfaceGlow) },
-        uColorDeep: { value: new THREE.Color(COLORS.mid) },
-        uColorSpec: { value: new THREE.Color(0xbfefff) },
-        uOpacity: { value: 0.5 },
-      },
-      vertexShader: waterSurfaceVertex,
-      fragmentShader: waterSurfaceFragment,
-    });
-
-    this.waterSurface = new THREE.Mesh(geo, mat);
-    this.waterSurface.rotation.x = Math.PI / 2;
-    // The surface is the ceiling of the water column, at SURFACE_Y. The camera's
-    // world-level lens parks just under it (see SURFACE_Y and the clamp in
-    // CameraRig) so it reads from below — a rippling sheet of light overhead,
-    // the thing every diver sees — rather than from above, where it was a bright
-    // flat slab cutting the frame in half.
-    this.waterSurface.position.set(0, SURFACE_Y, -600);
-    this.waterSurface.renderOrder = -820;
-    this.group.add(this.waterSurface);
     this.disposables.push(geo, mat);
   }
 
@@ -231,12 +227,10 @@ export class OceanEnvironment {
 
     for (let i = 0; i < count; i++) {
       positions[i * 3] = (Math.random() - 0.5) * spreadX;
-      // Wrapped by the shader inside [0, columnHeight]
       positions[i * 3 + 1] = Math.random() * columnHeight;
       positions[i * 3 + 2] =
         LAYERS.marineSnow + (Math.random() - 0.5) * spreadZ;
 
-      // A few large flakes, many tiny ones — real distribution
       const r = Math.random();
       scales[i] = r > 0.965 ? 1.8 + Math.random() * 1.6 : 0.35 + r * 0.85;
       phases[i] = Math.random() * Math.PI * 2;
@@ -261,7 +255,7 @@ export class OceanEnvironment {
         uSize: { value: 2.4 },
         uFallSpeed: { value: 6.0 },
         uColumnHeight: { value: 620 },
-        uFloorY: { value: 0 },
+        uFloorY: { value: SEAFLOOR_Y },
       },
       vertexShader: marineSnowVertex,
       fragmentShader: marineSnowFragment,
@@ -270,101 +264,43 @@ export class OceanEnvironment {
     this.snow = new THREE.Points(geo, mat);
     this.snow.frustumCulled = false;
     this.snow.renderOrder = -700;
-    // The shader wraps particles over uColumnHeight starting from the seafloor
-    this.snow.position.y = 0;
+    this.snow.position.y = SEAFLOOR_Y;
     this.group.add(this.snow);
     this.disposables.push(geo, mat);
   }
 
   // -------------------------------------------------------------------------
-  // Far ridge — the distant landmass silhouette, dissolved into the fog.
-  // Real geography inverted: mountain ranges become underwater ridges.
+  // Water surface — seen from below, at the top of the water column.
   // -------------------------------------------------------------------------
-  buildFarRidge() {
-    const geo = new THREE.PlaneGeometry(2600, 620);
+  buildWaterSurface() {
+    const geo = new THREE.PlaneGeometry(3000, 1600, 90, 48);
     const mat = new THREE.ShaderMaterial({
       transparent: true,
+      side: THREE.DoubleSide,
       depthWrite: false,
       uniforms: {
-        // A distant ridge is haze-blued, not black. Used to render as a
-        // near-black silhouette against the water, which read as a wall across
-        // the frame rather than as a mountain range fading into the column.
-        // Both stops are now close to the water itself, so the ridge reads as
-        // *distance* — aerial perspective — instead of as an object.
-        uColorTop: { value: new THREE.Color(0x3f6278) },
-        uColorBottom: { value: new THREE.Color(0x16334a) },
-        uOpacity: { value: 0.45 },
+        uTime: { value: 0 },
+        uColorShallow: { value: new THREE.Color(COLORS.surfaceGlow) },
+        uColorDeep: { value: new THREE.Color(COLORS.mid) },
+        uColorSpec: { value: new THREE.Color(0xbfefff) },
+        uOpacity: { value: 0.5 },
       },
-      vertexShader: ridgeVertex,
-      fragmentShader: ridgeFragment,
+      vertexShader: waterSurfaceVertex,
+      fragmentShader: waterSurfaceFragment,
     });
 
-    this.farRidge = new THREE.Mesh(geo, mat);
-    // Ridges are vertical silhouettes standing on the sediment
-    this.farRidge.position.set(0, 200, LAYERS.farRidge);
-    this.farRidge.renderOrder = -860;
-    this.group.add(this.farRidge);
-    this.disposables.push(geo, mat);
-
-    // A second, nearer ridge for parallax depth
-    const geo2 = new THREE.PlaneGeometry(2200, 460);
-    const mat2 = mat.clone();
-    mat2.uniforms = THREE.UniformsUtils.clone(mat.uniforms);
-    mat2.uniforms.uColorTop.value = new THREE.Color(0x2b4a60);
-    mat2.uniforms.uOpacity.value = 0.55;
-
-    this.midRidge = new THREE.Mesh(geo2, mat2);
-    this.midRidge.position.set(160, 150, LAYERS.farRidge + 220);
-    this.midRidge.renderOrder = -850;
-    this.group.add(this.midRidge);
-    this.disposables.push(geo2, mat2);
-  }
-
-  // -------------------------------------------------------------------------
-  // Horizon haze — a soft band that seals the seam between the floor and the
-  // open water, so nothing reads as a hard edge.
-  // -------------------------------------------------------------------------
-  buildHorizon() {
-    const geo = new THREE.PlaneGeometry(3000, 420);
-    const mat = new THREE.ShaderMaterial({
-      transparent: true,
-      depthWrite: false,
-      uniforms: {
-        uColor: { value: new THREE.Color(COLORS.deep) },
-        uOpacity: { value: 0.95 },
-      },
-      vertexShader: /* glsl */ `
-        varying vec2 vUv;
-        void main() {
-          vUv = uv;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: /* glsl */ `
-        precision highp float;
-        uniform vec3 uColor;
-        uniform float uOpacity;
-        varying vec2 vUv;
-        void main() {
-          // Solid at the bottom, feathering out at the top
-          float a = smoothstep(0.0, 0.85, vUv.y);
-          gl_FragColor = vec4(uColor, (1.0 - a) * uOpacity);
-        }
-      `,
-    });
-
-    this.horizon = new THREE.Mesh(geo, mat);
-    // Sits low, right on the sediment, sealing the floor/wall seam
-    this.horizon.position.set(0, 90, LAYERS.farRidge - 40);
-    this.horizon.renderOrder = -890;
-    this.group.add(this.horizon);
+    this.waterSurface = new THREE.Mesh(geo, mat);
+    this.waterSurface.rotation.x = Math.PI / 2;
+    this.waterSurface.position.set(0, 420, -600);
+    this.waterSurface.renderOrder = -820;
+    this.group.add(this.waterSurface);
     this.disposables.push(geo, mat);
   }
 
   // -------------------------------------------------------------------------
   // Per-frame update
   // -------------------------------------------------------------------------
-  update(delta, elapsed, depth) {
+  update(delta, elapsed) {
     this.clock = elapsed;
 
     if (this.gradient) {
@@ -375,38 +311,11 @@ export class OceanEnvironment {
     }
     if (this.godRays) {
       this.godRays.material.uniforms.uTime.value = elapsed;
-      // Slow breathing of the light shafts. The depth fade is applied after,
-      // once, so it is not multiplied in twice per frame.
       this.godRays.material.uniforms.uIntensity.value =
         0.42 + Math.sin(elapsed * 0.21) * 0.1 + Math.sin(elapsed * 0.07) * 0.06;
     }
     if (this.waterSurface) {
       this.waterSurface.material.uniforms.uTime.value = elapsed;
-    }
-
-    // The surface is only visible from the sunlit zone.
-    //
-    // At −4,200 m there is no water surface above you — that is the whole point
-    // of the abyss, and a bright ceiling in the world view was both physically
-    // false and visually a slab across the frame. Light reaches about 200 m;
-    // below the mesopelagic the surface should be gone entirely and the only
-    // light is what lives here. So the surface's opacity ramps to zero between
-    // 200 m and 1,000 m of depth, and the god rays and caustics fade with it —
-    // all three are surface light, and none of them exists this deep.
-    const d = Math.abs(depth != null ? depth : -180);
-    const surfaceFade = 1 - THREE.MathUtils.clamp((d - 200) / 800, 0, 1);
-
-    if (this.waterSurface) {
-      this.waterSurface.material.uniforms.uOpacity.value = 0.5 * surfaceFade;
-      this.waterSurface.visible = surfaceFade > 0.01;
-    }
-    if (this.godRays) {
-      this.godRays.material.uniforms.uIntensity.value *= surfaceFade;
-      this.godRays.visible = surfaceFade > 0.02;
-    }
-    if (this.caustics) {
-      this.caustics.material.uniforms.uOpacity.value = 0.55 * surfaceFade;
-      this.caustics.visible = surfaceFade > 0.02;
     }
     if (this.snow) {
       this.snow.material.uniforms.uTime.value = elapsed;
@@ -422,27 +331,6 @@ export class OceanEnvironment {
   dispose() {
     this.scene.remove(this.group);
 
-    // Release each resource once.
-    //
-    // Every builder in this module creates its own geometry and material, adds
-    // the mesh to `this.group`, AND pushes both into `this.disposables`. So the
-    // teardown ran two passes over the same sixteen objects: the traverse found
-    // each one by walking the scene, and then the disposables loop found the
-    // same sixteen again. Measured on a live low-tier environment: 16 resources
-    // in the scene, 16 tracked, 32 dispose events.
-    //
-    // three swallows a double dispose — destroyGeometry removes the listener,
-    // deletes the map entry and decrements the counter, so the second call is a
-    // silent no-op rather than an exception. That is why it survived: nothing
-    // threw and no frame looked wrong. But it makes the dispose count
-    // meaningless as evidence, and the count is the only evidence a resource bug
-    // ever has.
-    //
-    // The traverse is the authority, because it is the thing that knows what is
-    // actually attached. A tracked object no longer in the graph would be a
-    // leaked handle rather than a second thing to free, so it is released too —
-    // the two sets are equal today and this keeps them equal if a builder ever
-    // forgets to add its mesh.
     const disposed = new Set();
     const free = (res) => {
       if (!res || disposed.has(res)) return;
@@ -470,14 +358,10 @@ export class OceanEnvironment {
  * Thicker fog at depth = you can't see as far, which is physically true
  * and also hides the edge of the world.
  *
- * The fog colour matters more than the density. Using COLORS.mid here washed
- * the whole seafloor to a flat mid-blue once the gradient started rendering:
- * everything past ~200 units converged on the fog colour and the sediment
- * texture disappeared. COLORS.deep keeps distance reading as "water" while
- * letting the near floor keep its own colour.
+ * The fog colour matters more than the density. COLORS.deep keeps distance
+ * reading as "water" while letting the near floor keep its own colour.
  */
 export function createFog(depth) {
-  // Fog density scales with depth — deeper water scatters more light
   const t = Math.min(1, Math.abs(depth) / 4000);
   const density = 0.0006 + t * 0.0018;
   return new THREE.FogExp2(COLORS.deep, density);

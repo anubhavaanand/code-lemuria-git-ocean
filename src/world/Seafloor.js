@@ -104,6 +104,7 @@ export class Seafloor {
     this.buildFloor();
     this.buildOutcrops();
     this.buildRocks();
+    this.buildVents();
   }
 
   buildFloor() {
@@ -352,6 +353,53 @@ export class Seafloor {
       width,
       height,
     };
+  }
+
+  // -------------------------------------------------------------------------
+  // Deep-sea vents — bioluminescent glows on the seafloor.
+  // Real hydrothermal vents emit light from chemosynthetic bacteria and from
+  // the superheated water itself. Each vent is a small additive point of light
+  // that reads as "life in the deep" from any distance.
+  // -------------------------------------------------------------------------
+  buildVents() {
+    if (this.quality === "low") return;
+    const rng = mulberry(7771);
+    const count = this.isMobile ? 12 : 28;
+    const geo = new THREE.SphereGeometry(1, 10, 8);
+    const mat = new THREE.MeshBasicMaterial({
+      color: COLORS.biolumGreen,
+      transparent: true,
+      opacity: 0.85,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+
+    const vents = new THREE.InstancedMesh(geo, mat, count);
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const s = new THREE.Vector3();
+    const p = new THREE.Vector3();
+
+    for (let i = 0; i < count; i++) {
+      // Cluster vents near outcrops and rock clusters so they read as part of
+      // the terrain rather than as scattered lights.
+      const spot = rockField(rng);
+      const x = spot.x;
+      const z = spot.z;
+      const base = terrainNoise(x, z);
+
+      const r = 2 + rng() * 6;
+      p.set(x, SEAFLOOR_Y + base + r * 0.3, z);
+      q.setFromEuler(new THREE.Euler(rng() * 0.4, rng() * Math.PI * 2, 0));
+      s.setScalar(0.9 + rng() * 1.4);
+
+      m.compose(p, q, s);
+      vents.setMatrixAt(i, m);
+    }
+
+    vents.instanceMatrix.needsUpdate = true;
+    this.ventMesh = vents;
+    this.group.add(vents);
   }
 
   dispose() {

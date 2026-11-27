@@ -80,18 +80,6 @@ const isMobileDevice = () =>
   typeof navigator !== "undefined" &&
   /Android|iPhone|iPad|iPod|Mobile|Silk/i.test(navigator.userAgent);
 
-/**
- * How far a station must stand from the viewer's own zone before its obelisk is
- * built as full geometry.
- *
- * The city camera sits ~290 units out from the origin. An obelisk closer than
- * this to the origin is inside the lens's working distance and reads as a wall
- * rather than a landmark — London projects to (x −1, z +260), which is exactly
- * that case. The station still exists and still glows at world zoom; only its
- * full geometry is skipped.
- */
-const NEAR_LANDMARK_CLEARANCE = 420;
-
 export function detectQuality() {
   if (typeof navigator === "undefined") return "high";
   if (isMobileDevice()) return "mobile";
@@ -127,11 +115,6 @@ export class OceanWorld {
 
     this.onSelect = opts.onSelect || (() => {});
     this.onLevelChange = opts.onLevelChange || (() => {});
-    // The camera's own depth, reported once per whole-metre change, so the HUD
-    // gauge reads the water the viewer is actually in rather than the viewer's
-    // label. Optional like every other callback.
-    this.onDepthChange = opts.onDepthChange || (() => {});
-    this._lastCamDepth = null;
     this.onReady = opts.onReady || (() => {});
 
     this.data = buildWorld();
@@ -273,36 +256,33 @@ export class OceanWorld {
   }
 
   _initLights() {
-    // Ambient: the scattered light of the water column itself.
-    //
-    // Raised from 1.05. At that level anything not directly facing the sun —
-    // a tower's shaded side, the flanks of a whale, the sediment between ridges
-    // — fell to near-black against a 0x030b18 abyss, so the whole world read as
-    // silhouettes cut out of darkness. Deep water still scatters a great deal of
-    // light, and a diver at 1,200 m sees a soft blue-grey field, not a void. This
-    // is the term that turns the stage into water. The hemisphere and bounce
-    // lights carry the rest; this is the floor so nothing ever goes truly black.
-    this.scene.add(new THREE.AmbientLight(0x5a86a8, 1.55));
+    // Ambient: dim base of the water column. Not pure black — deep water still
+    // scatters some light, and pure black kills silhouette readability.
+    // Tuned by measuring rendered luminance per screen band: at 1.15 the
+    // sediment rendered at its full albedo (luma ~80) and the floor read as a
+    // receding plain rather than a flat slab.
+    this.scene.add(new THREE.AmbientLight(0x3a5c7a, 1.15));
 
     // A hemisphere term stands in for the real thing: the surface above is
     // lit, the sediment below is not.
-    const hemi = new THREE.HemisphereLight(0x9fd8f5, 0x2a4256, 1.15);
+    const hemi = new THREE.HemisphereLight(0x7fb3d5, 0x1a2e42, 0.95);
     this.scene.add(hemi);
 
-    // Sunlight filtering down through the surface.
-    const sun = new THREE.DirectionalLight(0xdaf1ff, 2.35);
-    sun.position.set(-140, 420, 200);
+    // Sunlight filtering down through the surface — strong, directional,
+    // coming from above-left so whales read as counter-shaded animals.
+    const sun = new THREE.DirectionalLight(0xe8f4ff, 2.4);
+    sun.position.set(-160, 460, 220);
     if (this.quality !== "low") {
       sun.castShadow = true;
       const s = this.isMobile ? 1024 : 2048;
       sun.shadow.mapSize.set(s, s);
-      const d = 170;
+      const d = 190;
       sun.shadow.camera.left = -d;
       sun.shadow.camera.right = d;
       sun.shadow.camera.top = d;
       sun.shadow.camera.bottom = -d;
       sun.shadow.camera.near = 20;
-      sun.shadow.camera.far = 1100;
+      sun.shadow.camera.far = 1200;
       sun.shadow.bias = -0.0014;
       sun.shadow.normalBias = 0.03;
     }
@@ -310,27 +290,27 @@ export class OceanWorld {
     this.scene.add(sun.target);
     this.sun = sun;
 
+    // Cold bounce from the seafloor — the ground reflects, it isn't a void
+    const bounce = new THREE.DirectionalLight(0x3d84b0, 0.85);
+    bounce.position.set(110, -280, -160);
+    this.scene.add(bounce);
+
+    // Faint warm rim from the front so whale backs separate from the water
+    const rim = new THREE.DirectionalLight(0xd4eaff, 0.75);
+    rim.position.set(180, 100, 380);
+    this.scene.add(rim);
+
+    // A wide, very soft fill from the camera side, so the near faces of the
+    // towers and the sediment still read without lifting the whole scene.
+    const fill = new THREE.DirectionalLight(0x5a8fb0, 0.5);
+    fill.position.set(80, 160, 560);
+    this.scene.add(fill);
+
     // The shadow-casting flag is authored from `this.quality`, which the
     // governor can move out from under this method. `shadowQualityApplied`
     // remembers what the renderer was last told, so a tier change that does not
     // touch shadows does not rebuild the map for nothing.
     this.shadowQualityApplied = this.quality !== "low";
-
-    // Cold bounce from the seafloor — the ground reflects, it isn't a void
-    const bounce = new THREE.DirectionalLight(0x4d94c0, 1.0);
-    bounce.position.set(90, -260, -140);
-    this.scene.add(bounce);
-
-    // Faint warm rim from the front so whale backs separate from the water
-    const rim = new THREE.DirectionalLight(0xbfe8ff, 0.85);
-    rim.position.set(160, 80, 340);
-    this.scene.add(rim);
-
-    // A wide, very soft fill from the camera side, so the near faces of the
-    // towers and the sediment still read without lifting the whole scene.
-    const fill = new THREE.DirectionalLight(0x7fb4d4, 0.65);
-    fill.position.set(60, 140, 520);
-    this.scene.add(fill);
   }
 
   /**
@@ -452,15 +432,10 @@ export class OceanWorld {
     // Only build the nearest few as full geometry; the rest become lights.
     //
     // Placed by stationPosition(), which is an orthographic projection of real
-    // latitude and longitude. As a consequence one capital (London, which
-    // projects to x ≈ −1, z ≈ +260) stands at almost exactly the city camera's
-    // z. That is fine for the map — it is where London really is — but an
-    // obelisk forty units in front of the lens is a black column across the
-    // frame, not a landmark. So an obelisk whose station is closer to the
-    // viewer's own district than `NEAR_LANDMARK_CLEARANCE` is kept as a
-    // cluster light (visible at world/country zoom) and its full geometry is
-    // skipped. The map is unchanged; the city view simply does not start
-    // inside a monument.
+    // latitude and longitude. The old formula compressed the whole planet into a
+    // 14 x 141 box, which was invisible while an obelisk was only a landmark to
+    // look at and fatal the moment a tube had to run between two of them: every
+    // edge of the network shared almost the same midpoint.
     this.stations = [];
     for (const cluster of CAPITAL_CLUSTERS) {
       const p = stationPosition(cluster);
@@ -468,12 +443,6 @@ export class OceanWorld {
 
       const dz = Math.abs(depthToY(cluster.depth) - depthToY(this.you.depth));
       if (dz > 900 && !this.isMobile) continue;
-
-      // Distance from the viewer's own zone (x=0, z≈0) on the floor plane.
-      // Anything inside the clearance is too close to the city lens to draw in
-      // full and becomes a light instead.
-      const near = Math.hypot(p.x, p.z) < NEAR_LANDMARK_CLEARANCE;
-      if (near) continue;
 
       const obelisk = new SonarObelisk(cluster, opts);
       obelisk.group.position.set(p.x, seafloorHeightAt(p.x, p.z), p.z);
@@ -485,11 +454,7 @@ export class OceanWorld {
     const lights = buildClusterLights(CAPITAL_CLUSTERS, {
       max: this.isMobile ? 4 : 6,
     });
-    // No extra offset. `stationPosition()` already places every capital at its
-    // real spot on the floor; adding LAYERS.farRidge - 80 on top shifted the
-    // lights ~940 units behind the obelisks they are supposed to mark, so at
-    // world zoom you flew toward a glow and arrived at empty sediment. The
-    // lights and the obelisks now share one map.
+    lights.position.set(0, SEAFLOOR_Y, LAYERS.farRidge - 80);
     this.scene.add(lights);
     this.clusterLights = lights;
 
@@ -656,14 +621,6 @@ export class OceanWorld {
         const shape = entry.tower.applyRepo(repo);
         if (shape && shape.changed) {
           this._rederiveEntry(entry, repo);
-        } else {
-          // The tower's silhouette did not change, but the legacy colony reads
-          // eighteen fields the tower never reads — readmeQuality and readmeLength
-          // among them. Its applyRepo is guarded by a content signature, so this
-          // is a no-op unless one of those actually moved. Without it a README-only
-          // live pass would leave the brain coral and the basking shark at their
-          // mock size while the HUD showed the real numbers.
-          this._rebuildColony(entry, repo);
         }
       }
 
@@ -727,7 +684,15 @@ export class OceanWorld {
     // time anything is looked at.
     if (this.kelpBatch) this.kelpBatch.refresh(entry.tower);
 
-    this._rebuildColony(entry, repo);
+    if (entry.legacy && typeof entry.legacy.applyRepo === "function") {
+      const rebuilt = entry.legacy.applyRepo(repo, { tower: entry.tower });
+      if (rebuilt) {
+        // The HUD holds the registry it was handed. Rebuild the list rather than
+        // mutating it, because the old entries describe creatures that no longer
+        // exist (a repo that gained open discussions grows a herd of urchins).
+        entry.fauna = entry.legacy.creatures;
+      }
+    }
 
     // The selection is a snapshot. If this tower is the selected one, re-point the
     // cached focus values so the camera frames the new size rather than the old.
@@ -744,32 +709,6 @@ export class OceanWorld {
         // its pulse climb. Re-select so those are re-read from the new shape.
         this.marker.setSelected(entry.tower);
       }
-    }
-  }
-
-  /**
-   * Rebuild a tower's legacy colony if the data it reads has moved.
-   *
-   * Split out of `_rederiveEntry` because the colony has to be reachable on two
-   * paths, not one: when the tower's silhouette changes, and when only a field
-   * the tower never reads changes. `readmeQuality` and `readmeLength` are exactly
-   * that second case — a README correction moves the brain coral and the basking
-   * shark without changing the tower's height or girth, so the old gate (rebuild
-   * only when the tower's shape changed) never reached them.
-   *
-   * The colony's own `applyRepo` is guarded by a content signature, so calling it
-   * when nothing it reads changed is a string comparison and no work.
-   */
-  _rebuildColony(entry, repo) {
-    if (!entry || !entry.legacy || typeof entry.legacy.applyRepo !== "function") {
-      return;
-    }
-    const rebuilt = entry.legacy.applyRepo(repo, { tower: entry.tower });
-    if (rebuilt) {
-      // The HUD holds the registry it was handed. Rebuild the list rather than
-      // mutating it, because the old entries describe creatures that no longer
-      // exist (a repo that gained open discussions grows a herd of urchins).
-      entry.fauna = entry.legacy.creatures;
     }
   }
 
@@ -1398,25 +1337,7 @@ export class OceanWorld {
     // with the thing that has to fit, and it is zero for nothing.
     const wantFraction = 0.42;
     const clearance = length * 0.6;
-    // The ORBIT has to fit too, not only the animal.
-    //
-    // The whale circles at `focusRadius`, so at the far phase its nose reaches
-    // `focusRadius + length/2` from the aim point. A distance solved from the
-    // body alone therefore crops the animal at the frame edge exactly when the
-    // orbit is wider than the body — measured on vue: orbit 62, body 48.8, so
-    // the nose sat 86.4 units off-axis while the half-frame at the body-only
-    // distance covered 76. The head was cut off at the left edge, and the vision
-    // pass said so before any of this was measured.
-    //
-    // Solving against the orbit as well costs a wider frame on every repo, and
-    // that is the level's contract: "the whole repo as an animal". A whale that
-    // leaves the frame at one phase of its own orbit is not framed, it is
-    // cropped, and which phase you happen to load is not a framing decision.
-    const orbitR = this.focusRadius || 0;
-    const halfFrameNeeded = (orbitR + length * 0.5) * 1.30;
-    const distForOrbit = halfFrameNeeded / tx;
-    const distForBody = (length * 0.5) / (tx * wantFraction) + clearance;
-    const dist = Math.max(distForBody, distForOrbit);
+    const dist = (length * 0.5) / (tx * wantFraction) + clearance;
     follow.distance = dist;
     follow.focusY = orbitY;
     // Camera height is measured FROM the focus, so this is the pitch expressed
@@ -1467,12 +1388,8 @@ export class OceanWorld {
 
       // --- Environment ---
       // Guarded: `?only=whale` skips the water column entirely, so there is no
-      // ocean to update. The camera's depth is passed so the surface light can
-      // fade out below the sunlit zone — at −4,200 m there is no water surface
-      // overhead, and drawing one there was both false and a slab in the frame.
-      if (this.ocean) {
-        this.ocean.update(delta, t, this.rig.currentDepth || -180);
-      }
+      // ocean to update.
+      if (this.ocean) this.ocean.update(delta, t);
 
       // Fog is authored per zoom level (real metres), so the density is read
       // directly rather than recomputed from the depth value.
@@ -1673,46 +1590,15 @@ export class OceanWorld {
         this.onLevelChange(this.rig.level);
       }
 
-      // The depth readout follows the camera, not the identity.
-      //
-      // The HUD used to show `identity.depth` — the viewer's own fixed depth
-      // (−520 m) — at every zoom, so the gauge read −520 m whether you were at
-      // the world view or nose-to-nose with a whale. Depth is the spine of the
-      // 2.5D design and the single number that tells a viewer where in the water
-      // column they are, so it has to be the camera's depth, eased the same way
-      // the fog is so the number and the water agree. Quantised to whole metres
-      // and written only when it changes, so the loop does not re-render the HUD
-      // for a fraction of a metre.
-      const camDepth = Math.round(this.rig.currentDepth || 0);
-      if (camDepth !== this._lastCamDepth) {
-        this._lastCamDepth = camDepth;
-        if (typeof this.onDepthChange === "function") this.onDepthChange(camDepth);
-      }
-
       // --- Cluster lights: travelling shimmer ---
-      //
-      // The far-settlement beacons are a WORLD and COUNTRY device: at those
-      // zooms a capital is a light on the dark. Descend to the city — where a
-      // station is a landmark you are standing next to — and a 90-unit additive
-      // column is a wall of light in the lens, not a settlement. So the whole
-      // group fades out between the country and city bands and is hidden once
-      // there is no opacity left to see.
-      //
-      // Driven from the rig's continuous zoom position rather than the discrete
-      // level id, so the fade tracks the descent instead of popping at a
-      // boundary.
       if (this.clusterLights) {
-        const t = this.rig.t; // 0 = world, 1 = country, 2 = city
-        const fade = 1 - THREE.MathUtils.clamp((t - 0.9) / 0.9, 0, 1);
         const kids = this.clusterLights.children;
         for (let i = 0; i < kids.length; i++) {
           const m = kids[i].material;
           if (!m) continue;
-          if (m.userData.baseOpacity == null) m.userData.baseOpacity = m.opacity;
           const p = 0.5 + Math.sin(t * 0.8 + i * 0.9) * 0.5;
-          m.opacity = m.userData.baseOpacity * (0.7 + p * 0.3) * fade;
+          m.opacity = 0.1 + p * 0.2;
         }
-        this.clusterLights.visible = fade > 0.01;
       }
 
       // Read the CPU cost before rendering, so it measures the update loops and
