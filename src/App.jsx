@@ -24,6 +24,63 @@ import { ZOOM_LEVELS } from "./world/constants";
 import HUD from "./ui/HUD";
 import "./index.css";
 
+/**
+ * The ids the world used before it collapsed to three levels.
+ *
+ * `?level=` is a published URL contract — it is documented in the README and it
+ * is what every shared link and screenshot command carries. Renaming the levels
+ * without this map would silently drop anyone arriving on `?level=city` onto the
+ * default, which is a different view rather than an error they could notice.
+ * Each old name maps to the level that now covers it.
+ */
+export const LEVEL_ALIASES = {
+  world: "deep",
+  country: "deep",
+  city: "tower",
+};
+
+/** Resolve a requested level id to one that exists, or null. */
+export function resolveLevelId(requested) {
+  if (!requested) return null;
+  const direct = ZOOM_LEVELS.find((l) => l.id === requested);
+  if (direct) return direct.id;
+  const alias = LEVEL_ALIASES[requested];
+  if (alias && ZOOM_LEVELS.some((l) => l.id === alias)) return alias;
+  return null;
+}
+
+/**
+ * The level the app opens on.
+ *
+ * Two things this must not do, both of which it used to:
+ *
+ *   - return a hard-coded id. The old code fell back to the literal `"city"`,
+ *     and when the levels were renamed to `deep`/`tower`/`whale` that string
+ *     stopped existing — so the default became whatever the lookup happened to
+ *     produce rather than a decision.
+ *   - index the list. The depth seed read `ZOOM_LEVELS[2]`, which was `city` and
+ *     is now `whale`: every visitor's first frame silently became a close-up of
+ *     one animal.
+ *
+ * The default is the middle level, chosen by position in the list, and it is
+ * read from the same resolved id the rest of the app uses.
+ */
+export function startupLevelId() {
+  const q =
+    typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("level")
+      : null;
+  const resolved = resolveLevelId(q);
+  if (resolved) return resolved;
+  return ZOOM_LEVELS[Math.min(1, ZOOM_LEVELS.length - 1)].id;
+}
+
+/** Depth of a level id, for the first paint of the depth gauge. */
+function levelDepth(id) {
+  const found = ZOOM_LEVELS.find((l) => l.id === id);
+  return found ? found.depth : ZOOM_LEVELS[0].depth;
+}
+
 export default function App() {
   const containerRef = useRef(null);
   const worldRef = useRef(null);
@@ -57,26 +114,14 @@ export default function App() {
 
   const [world, setWorld] = useState(null);
   const [selectedRepo, setSelectedRepo] = useState(null);
-  const [levelId, setLevelId] = useState(() => {
-    // ?level=city|world|country|tower|whale — used by the screenshot QA pass
-    const q =
-      typeof window !== "undefined"
-        ? new URLSearchParams(window.location.search).get("level")
-        : null;
-    const found = ZOOM_LEVELS.findIndex((l) => l.id === q);
-    return found >= 0 ? q : "city";
-  });
+  const [levelId, setLevelId] = useState(() => startupLevelId());
   // The camera's own depth, mirrored into React so the gauge reads the water the
   // viewer is in. Seeded from the starting level so the first paint is correct
-  // rather than zero.
-  const [cameraDepth, setCameraDepth] = useState(() => {
-    const q =
-      typeof window !== "undefined"
-        ? new URLSearchParams(window.location.search).get("level")
-        : null;
-    const found = ZOOM_LEVELS.findIndex((l) => l.id === q);
-    return ZOOM_LEVELS[found >= 0 ? found : 2].depth;
-  });
+  // rather than zero. Derived from the resolved level rather than a second
+  // `${?level}` lookup, so the two cannot disagree.
+  const [cameraDepth, setCameraDepth] = useState(
+    () => levelDepth(startupLevelId())
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   // How far the live-data pass has got, or null while it is not running. Shown
@@ -153,12 +198,14 @@ export default function App() {
     worldRef.current = instance;
     setWorld(instance);
 
-    // Honour an explicit ?level= for the QA screenshot pass
+    // Honour an explicit ?level= for the QA screenshot pass. Same resolver as
+    // the React state, so an aliased id (`?level=city`) moves the camera to the
+    // level the HUD is already showing rather than leaving the two disagreeing.
     const q =
       typeof window !== "undefined"
         ? new URLSearchParams(window.location.search).get("level")
         : null;
-    const start = ZOOM_LEVELS.findIndex((l) => l.id === q);
+    const start = ZOOM_LEVELS.findIndex((l) => l.id === resolveLevelId(q));
     if (start >= 0) {
       // Set BOTH. `t` is the eased position the rig actually reads; `targetT`
       // is what it eases toward every frame. Setting only `t` used to mean the

@@ -201,9 +201,13 @@ describe("camera surface clamp", () => {
     // the surface, and it must come out exactly as authored.
     const camera = new THREE.PerspectiveCamera(48, 1440 / 900, 0.5, 12000);
     const r = new CameraRig(camera, dom(), { levels: ZOOM_LEVELS });
-    r.goTo(3);
+    // By id, not by index. This read `ZOOM_LEVELS[3]`, which was the tower level
+    // while there were five; with three levels index 3 does not exist and the
+    // test threw instead of asserting. The intent was always "the tower level".
+    const towerIndex = ZOOM_LEVELS.findIndex((l) => l.id === "tower");
+    r.goTo(towerIndex);
     r.apply(0, true, null);
-    const tower = ZOOM_LEVELS[3];
+    const tower = ZOOM_LEVELS[towerIndex];
     const pitchTerm = -Math.sin(r.pitch) * tower.distance * 0.55;
     expect(r.camera.position.y).toBeCloseTo(tower.focusY + tower.height + pitchTerm, 1);
   });
