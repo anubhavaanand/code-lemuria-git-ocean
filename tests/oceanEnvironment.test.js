@@ -145,8 +145,13 @@ describe("ocean environment dispose", () => {
       quality: "high",
       isMobile: false,
     });
-    expect(resources(low).size).toBe(16);
-    expect(resources(high).size).toBe(16);
+    // 14, not 16: the horizon seal was removed when the world collapsed to one
+    // 3D volume. The seal existed to hide the edge of the 2.5D backdrop, and
+    // there is no backdrop edge now — a real water surface at `SURFACE_Y` closes
+    // the volume instead. The count is still asserted per tier, because that is
+    // what catches a builder silently dropping out.
+    expect(resources(low).size).toBe(14);
+    expect(resources(high).size).toBe(14);
     expect(high.disposables.length).toBe(low.disposables.length);
     high.dispose();
   });

@@ -1281,9 +1281,27 @@ export class OceanWorld {
     //
     // A fraction of the body length clears the orbit at every size: it scales
     // with the thing that has to fit, and it is zero for nothing.
+    //
+    // Body length alone is not sufficient, though. The whale circles its tower
+    // at `focusRadius`, so at the far phase of its orbit its nose reaches
+    // `focusRadius + length/2` from the aim point — and a distance fitted to the
+    // body crops the animal at the frame edge exactly when the orbit is the
+    // wider of the two. Measured on vue: orbit 62, body 48.78, so the body-only
+    // distance covered a half-frame of 76 units while the nose sat 86.4 off
+    // axis, and the head was cut off at the left edge.
+    //
+    // So take the larger of the two: the body term as before, and an orbit term
+    // that fits `focusRadius + length/2` with a 30% margin. On vue that is 157.6
+    // units instead of 123.8.
     const wantFraction = 0.42;
     const clearance = length * 0.6;
-    const dist = (length * 0.5) / (tx * wantFraction) + clearance;
+    const distForBody = (length * 0.5) / (tx * wantFraction) + clearance;
+
+    const orbitR = this.focusRadius || 0;
+    const halfFrameNeeded = (orbitR + length * 0.5) * 1.3;
+    const distForOrbit = halfFrameNeeded / tx;
+
+    const dist = Math.max(distForBody, distForOrbit);
     follow.distance = dist;
     follow.focusY = orbitY;
     // Camera height is measured FROM the focus, so this is the pitch expressed
