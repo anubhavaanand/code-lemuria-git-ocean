@@ -535,6 +535,60 @@ export class OceanWorld {
 
     // --- Ambient towers: the anonymous mass of GitHub ---
     this._addAmbientTowers();
+
+    // --- Deep ocean language colonies ---
+    // Last, because they are the furthest thing in the world and the only part
+    // whose placement is driven by depth rather than by a band constant.
+    this._addColonies();
+  }
+
+  /**
+   * The deep ocean language colonies — unlocated users, clustered by language.
+   *
+   * `buildWorld()` has produced `data.colonies` (eight languages, five towers
+   * each) since the first pass, and nothing ever read it: the towers existed in
+   * the data and were invisible in the scene. The drift header documents this as
+   * the world's fourth region, so the absence was the whole of it.
+   *
+   * Placed at `zBase: 0` rather than a band, because a colony's z is derived
+   * from its depth. A band constant put every colony in the same slab and
+   * flattened the one axis — depth — that distinguishes them.
+   *
+   * No whales and no orbiting creatures. A colony is a neighbourhood, not a
+   * profile: the visitor's own social graph is what the near field is for. The
+   * Legacy fauna stays, because a tower's creatures are its commits and issues,
+   * which a colony tower has like any other.
+   */
+  _addColonies() {
+    const colonies = this.data.colonies || [];
+    if (!colonies.length) return;
+
+    // Mobile drops most of the far field, which is exactly what a colony is.
+    const perColony = this.isMobile ? 2 : 5;
+
+    this.colonyTowers = [];
+    for (const colony of colonies) {
+      const towers = (colony.towers || []).slice(0, perColony);
+      for (const repo of towers) {
+        const pos = repo.position || [0, 0];
+        const tower = new KelpTower(repo, {
+          quality: "low",
+          isMobile: this.isMobile,
+          batchProps: true,
+        });
+        // `pos[1]` is already an absolute z from worldData; passing zBase 0
+        // keeps it that way instead of re-basing it into a band.
+        const tx = pos[0];
+        const tz = pos[1];
+        tower.group.position.set(tx, seafloorHeightAt(tx, tz), tz);
+        tower.group.scale.setScalar(0.62 + ((repo.totalCommits || 0) % 100) / 340);
+        this.scene.add(tower.group);
+        this.towers.push({ tower, repo, entry: null, colony: colony.language });
+        this._batch().add(tower);
+        this.colonyTowers.push({ tower, repo, colony });
+      }
+    }
+    this._batch().build();
   }
 
   // =========================================================================

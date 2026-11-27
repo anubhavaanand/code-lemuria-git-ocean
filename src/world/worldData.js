@@ -743,6 +743,29 @@ export function generateAmbientTowers(cluster, count = 14) {
 // Language colony towers — sparse, deep, atmospheric
 // ---------------------------------------------------------------------------
 
+/**
+ * Where a colony stands in Z, from its depth alone.
+ *
+ * The colonies were given a depth in metres and an x, and no z at all — so the
+ * only rule available is the one the depth is already stating: deeper is
+ * further back. That is also the honest reading of the water column, where a
+ * trench floor is further from the camera than a shelf. No angle is assigned,
+ * because a fixed angle per language would put the world on a clock face and
+ * the whole point of the deep scatter is that it is not mapped.
+ *
+ * The band starts beyond `kelpForestFar` (-430) and the city ring's far edge,
+ * so a colony never lands inside a community that has a station.
+ */
+const COLONY_Z_NEAR = -1250;
+const COLONY_Z_FAR = -2000;
+
+export function colonyZ(depth) {
+  const shallow = -2200;
+  const deep = -5200;
+  const t = Math.min(1, Math.max(0, (depth - shallow) / (deep - shallow)));
+  return COLONY_Z_NEAR + (COLONY_Z_FAR - COLONY_Z_NEAR) * t;
+}
+
 export function generateColonyTowers(colony, count = 6) {
   const rng = makeRng(hashString(colony.language + "colony"));
   const towers = [];
@@ -750,6 +773,10 @@ export function generateColonyTowers(colony, count = 6) {
   for (let i = 0; i < count; i++) {
     const angle = rng() * Math.PI * 2;
     const radius = 60 + rng() * 220;
+    // Absolute z, not a band offset. The caller places colonies at zBase 0 so
+    // that a colony's depth is what decides how far back it stands, rather than
+    // a band constant that would flatten all eight into one slab.
+    const cz = colonyZ(colony.depth);
     const repo = makeRepo({
       owner: `deep_${Math.floor(rng() * 8000 + 1000)}`,
       name: `${colony.language.toLowerCase()}-${["drift", "trench", "vent", "shoal", "ventral", "abyss"][Math.floor(rng() * 6)]}`,
@@ -772,7 +799,7 @@ export function generateColonyTowers(colony, count = 6) {
       testCoverage: Math.floor(rng() * 70),
       downloads: Math.floor(rng() * 90000),
       releases: Math.floor(rng() * 18),
-      position: [colony.x + Math.cos(angle) * radius, Math.sin(angle) * radius],
+      position: [colony.x + Math.cos(angle) * radius, cz + Math.sin(angle) * radius],
       depth: colony.depth + (rng() - 0.5) * 260,
     });
     towers.push(repo);
