@@ -354,6 +354,10 @@ uniform vec3  uColorVentral;
 uniform vec3  uColorScar;
 uniform float uScarAmount;
 uniform float uTime;
+uniform vec3  uSpecColor;
+uniform float uSpecStrength;
+uniform float uSubsurface;
+uniform vec3  uSubsurfaceColor;
 varying vec3 vNormalW;
 varying vec3 vPosL;
 varying vec3 vWorld;
@@ -411,6 +415,22 @@ void main() {
   float rim = 1.0 - max(dot(n, viewDir), 0.0);
   rim = pow(rim, 3.2);
   col += uColorVentral * rim * 0.42;
+
+  // ---- Wet specular highlight ---------------------------------------------
+  // Real whale skin is oily and wet: a tight specular lobe where the key light
+  // glances off the surface. This single highlight sells "wet animal" more than
+  // any other effect.
+  vec3 reflectDir = reflect(-keyDir, n);
+  float spec = pow(max(dot(viewDir, reflectDir), 0.0), 32.0);
+  col += uSpecColor * spec * uSpecStrength;
+
+  // ---- Subsurface scattering approximation ---------------------------------
+  // Light penetrates thin skin and glows from within, strongest where the body
+  // is thin (flukes, fluke notch, around the eye) and where the normal points
+  // toward the light. This reads as living tissue, not plastic.
+  float ss = pow(max(dot(n, keyDir), 0.0), 2.0);
+  ss = ss * (1.0 - upness * 0.5); // stronger on the side/belly, not the dark back
+  col += uSubsurfaceColor * ss * uSubsurface;
 
   gl_FragColor = vec4(col, 1.0);
 }

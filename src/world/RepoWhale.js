@@ -265,6 +265,12 @@ export class RepoWhale {
       uColorScar: { value: new THREE.Color(COLORS.whaleScar) },
       // Scars accumulate with age — an old repo is a marked animal
       uScarAmount: { value: THREE.MathUtils.clamp((this.repo.ageDays || 0) / 2200, 0.05, 0.85) },
+      // Wet specular — oily skin catches the key light in a tight lobe
+      uSpecColor: { value: new THREE.Color(COLORS.biolumCyan) },
+      uSpecStrength: { value: 0.55 },
+      // Subsurface scattering — light glows through thin skin
+      uSubsurface: { value: 0.28 },
+      uSubsurfaceColor: { value: new THREE.Color(COLORS.biolumGold) },
       uTime: { value: 0 },
     };
 
