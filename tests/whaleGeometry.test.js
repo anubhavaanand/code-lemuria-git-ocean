@@ -74,6 +74,62 @@ describe("whale geometry", () => {
     expect(strays).toEqual([]);
   });
 
+  it("sizes the blowhole and plume from the sculpt, not the lathe formula", () => {
+    const world = buildWorld();
+    const repo = { ...world.following.find((r) => r.name === "vue"), releases: 12 };
+    const w = new WhaleWithSculpt(repo, { quality: "low" });
+
+    // The lathe body: the spout is built from `girth`, so the two agree.
+    const latheG = w.bodyDiameter();
+    expect(latheG).toBeCloseTo(w.girth, 6);
+    w.spout.geometry.computeBoundingBox();
+    const latheH = w.spout.geometry.boundingBox.max.y - w.spout.geometry.boundingBox.min.y;
+
+    // A sculpt of a different diameter (22.9 measured against a 9.73 formula).
+    // `rescaleAppendages` is the path `adoptSculpt` calls once the body swaps.
+    w.sculptSize = new THREE.Vector3(w.length, 22.9, 22.9);
+    w.rescaleAppendages();
+
+    expect(w.bodyDiameter()).toBeCloseTo(22.9, 6);
+    w.spout.geometry.computeBoundingBox();
+    const sculptH = w.spout.geometry.boundingBox.max.y - w.spout.geometry.boundingBox.min.y;
+
+    // The plume grew with the animal instead of staying at the lathe's size.
+    expect(sculptH).toBeGreaterThan(latheH * 2);
+    // And it sits on the measured skin, not on the formula's radius.
+    expect(w.blowhole.position.y).toBeCloseTo(w.surfaceRadius(0.22) * 1.02, 5);
+    expect(w.spout.position.y).toBeCloseTo(w.surfaceRadius(0.22) * 1.3, 5);
+  });
+
+  it("re-seats the ventral pleats on the sculpt's skin", () => {
+    const world = buildWorld();
+    const repo = world.following.find((r) => r.name === "vue");
+    const w = new WhaleWithSculpt(repo, { quality: "low" });
+
+    // Pleats are closed issues; vue has thousands, so the build makes several.
+    expect(w.pleats.length).toBeGreaterThan(1);
+    const latheX = w.pleats.map((p) => p.mesh.position.x);
+
+    w.sculptSize = new THREE.Vector3(w.length, 22.9, 22.9);
+    w.rescaleAppendages();
+
+    // The stations follow the sculpt's nose and tail, not the lathe's.
+    const sculptX = w.pleats.map((p) => p.mesh.position.x);
+    expect(sculptX).not.toEqual(latheX);
+
+    // Each pleat sits on the skin at its own fraction.
+    for (const p of w.pleats) {
+      expect(p.mesh.position.x).toBeCloseTo(w.xAt(p.t), 4);
+      expect(p.mesh.position.y).toBeCloseTo(-w.surfaceRadius(p.t) * 0.55, 4);
+    }
+
+    // The arc grew with the animal rather than staying at the formula's size.
+    const k = 22.9 / w.girth;
+    const first = w.pleats[0];
+    expect(first.mesh.scale.x).toBeCloseTo((1 - first.t * 0.4) * k, 4);
+    expect(first.mesh.scale.x).toBeGreaterThan(1 - first.t * 0.4);
+  });
+
   it("scales the animal from the commit count, as the roadmap says", () => {
     const world = buildWorld();
     const repo = world.following.find((r) => r.name === "vue");

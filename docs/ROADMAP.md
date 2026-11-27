@@ -233,6 +233,24 @@ sculpt's lateral radius exceeds its vertical one, every barnacle satisfies the
 ellipse equation after `rescaleAppendages`, and the barnacle mesh is left
 unscaled so the cluster is not dragged inward.
 
+Two further parts sized themselves from the formula **outright**, rather than as
+a ratio, and were built at a station a sculpt does not have: the blowhole and the
+exhalation plume. For vue's humpback the plume was drawn at 43% of the animal it
+was meant to be breathing out of. `bodyDiameter()` is the seam — the lathe
+formula on the lathe, the measured `sculptSize.y` on a sculpt — and
+`reseatSpout()` re-places and re-sizes both once the body has swapped.
+
+The ventral pleats were the same defect found by applying the rule rather than by
+noticing it: built from `girth`, placed from the lathe profile, then unreferenced,
+so a sculpt could not correct them. They are kept as `{mesh, t}` stations now —
+the way the remoras always were — and `reseatPleats()` moves each onto the
+measured skin.
+
+The rule this leaves behind is narrow and worth stating: **`girth` may size
+something only if that something is also built on the lathe.** A part that must
+survive a sculpt swap reads `surfaceRadius()`/`surfaceRadiusZ()`, or a seam like
+`bodyDiameter()`.
+
 ### 4. Metro geometry
 
 **Status: geometry drawn. Riding it is still Phase 2.**
@@ -298,9 +316,13 @@ tube cannot be checked against pixels the way a whale can.
 - **Full 3D world** — a future major version. The 2.5D layered-depth build has
   to be good first; a half-finished 3D world would prove nothing the 2.5D one
   has not already proved.
-- **Audio** — `LANGUAGE_SONG` exists in `constants.js` with a per-language base
-  frequency, wobble and timbre, and is consumed by nothing. The mapping is
-  designed; the implementation is not.
+- **Audio** — **done, minimally.** `LANGUAGE_SONG` now has a consumer:
+  `src/world/LanguageSong.js` resolves a repo's primary language to a dialect and
+  a `WhaleSong` voice speaks it, behind a HUD toggle that is off by default. One
+  voice at a time, on selection — a call, not a soundscape. What is still absent
+  is *ambient* audio: zone beds, metro travel sound, a mix that lets several
+  nearby animals be heard at once. That needs a mixer and belongs with the
+  Phase 2 work.
 - **Obelisk skin voting** — 7-day epoch, culturally themed skins per cluster.
 - **Onboarding**, **perf budget**, **rate limiting**, **user avatar**,
   **info-reveal UX**, **project naming** — all still open from the original

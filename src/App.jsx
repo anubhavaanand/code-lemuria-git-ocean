@@ -273,6 +273,19 @@ export default function App() {
                 return `threw: ${(e && e.message) || String(e)}`;
               }
             })(),
+            // The diameter parts are actually sized from. On the lathe it is
+            // `girth`; on a sculpt it is the measured body. Reported next to
+            // `girth` so the gap between the formula and the animal is a number
+            // in the census rather than something to infer from two fields.
+            bodyDiameter: Number(w.bodyDiameter().toFixed(2)),
+            pleats: w.pleats ? w.pleats.length : 0,
+            spoutPlume: w.spout
+              ? (() => {
+                  w.spout.geometry.computeBoundingBox();
+                  const b = w.spout.geometry.boundingBox;
+                  return Number((b.max.y - b.min.y).toFixed(2));
+                })()
+              : null,
             nodes: (() => {
               let n = 0;
               w.group.traverse(() => n++);
