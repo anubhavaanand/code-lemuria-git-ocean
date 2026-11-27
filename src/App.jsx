@@ -21,6 +21,7 @@ import { OceanWorld } from "./world/OceanWorld";
 import { loadProfile, loadOne } from "./services/profile";
 import { FrameProfiler } from "./world/perf";
 import { ZOOM_LEVELS } from "./world/constants";
+import { colonyCensus } from "./world/worldData";
 import HUD from "./ui/HUD";
 import "./index.css";
 
@@ -459,16 +460,7 @@ export default function App() {
         // The deep colonies, per language. A colony that is in the data and not
         // in the scene is invisible to every pixel check and to every count of
         // `towers`, so the group's size and its z range are reported directly.
-        colonies: () =>
-          (instance.colonyTowers || []).reduce((acc, c) => {
-            const p = c.tower.group.position;
-            const entry = acc[c.colony] || (acc[c.colony] = {
-              language: c.colony, towers: 0, z: [],
-            });
-            entry.towers += 1;
-            entry.z.push(Number(p.z.toFixed(0)));
-            return acc;
-          }, {}),
+        colonies: () => colonyCensus(instance.colonyTowers),
         rocks: () => {
           const cam = instance.camera;
           const el = containerRef.current;

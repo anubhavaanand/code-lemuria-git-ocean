@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildWorld,
+  colonyCensus,
   colonyZ,
   generateColonyTowers,
   LANGUAGE_COLONIES,
@@ -89,5 +90,36 @@ describe("deep ocean colonies", () => {
         expect(tower.language).toBe(colony.language);
       }
     }
+  });
+
+  it("census keys by language, not by the colony object", () => {
+    // The scene stores the whole colony record on each entry, so a reducer that
+    // keyed on `c.colony` produced one bucket called "[object Object]" holding
+    // all forty towers: the census reported one language and could not show
+    // whether the other seven had built at all.
+    const world = buildWorld();
+    const entries = world.colonies.flatMap((colony) =>
+      colony.towers.map((tower) => ({ colony, tower: { group: { position: { z: -1500 } } } }))
+    );
+    const census = colonyCensus(entries);
+
+    expect(Object.keys(census)).not.toContain("[object Object]");
+    expect(Object.keys(census)).toHaveLength(LANGUAGE_COLONIES.length);
+    for (const colony of world.colonies) {
+      expect(census[colony.language]).toBeTruthy();
+      expect(census[colony.language].towers).toBe(colony.towers.length);
+    }
+    // Every tower is counted exactly once, so no bucket swallowed the rest.
+    const total = Object.values(census).reduce((n, e) => n + e.towers, 0);
+    expect(total).toBe(entries.length);
+  });
+
+  it("census ignores an entry with no colony and rounds z", () => {
+    const census = colonyCensus([
+      { colony: { language: "Rust" }, tower: { group: { position: { z: -1234.56 } } } },
+      { colony: null, tower: { group: { position: { z: -1 } } } },
+    ]);
+    expect(Object.keys(census)).toEqual(["Rust"]);
+    expect(census.Rust.z).toEqual([-1235]);
   });
 });

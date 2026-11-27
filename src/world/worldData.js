@@ -766,6 +766,33 @@ export function colonyZ(depth) {
   return COLONY_Z_NEAR + (COLONY_Z_FAR - COLONY_Z_NEAR) * t;
 }
 
+/**
+ * Per-language census of the colony towers that reached the scene.
+ *
+ * Lives here rather than inline in the census closure so it can be tested: it
+ * has already been wrong once. The scene stores the whole colony record on each
+ * entry, and keying on that object gave a single bucket named
+ * "[object Object]" that counted all forty towers — so the census reported one
+ * language and hid whether the other seven had built at all.
+ *
+ * @param {{colony?: {language: string}, tower: {group: {position: {z: number}}}}[]} entries
+ * @returns {Record<string, {language: string, towers: number, z: number[]}>}
+ */
+export function colonyCensus(entries) {
+  return (entries || []).reduce((acc, c) => {
+    const language = c.colony && c.colony.language;
+    if (!language) return acc;
+    const entry = acc[language] || (acc[language] = {
+      language,
+      towers: 0,
+      z: [],
+    });
+    entry.towers += 1;
+    entry.z.push(Number(c.tower.group.position.z.toFixed(0)));
+    return acc;
+  }, {});
+}
+
 export function generateColonyTowers(colony, count = 6) {
   const rng = makeRng(hashString(colony.language + "colony"));
   const towers = [];
