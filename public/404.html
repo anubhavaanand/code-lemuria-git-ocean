@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Git Ocean</title>
+    <meta name="robots" content="noindex" />
+    <script>
+      /*
+       * GitHub Pages serves static files. There is no server to rewrite
+       * `/auth/callback?code=...` onto `index.html`, so without this file the
+       * browser gets Pages' own 404 and the app never boots — the OAuth round
+       * trip would end on a GitHub error page *after* the user granted access,
+       * which is the worst possible place to fail.
+       *
+       * Pages serves this document for any unmatched path, so it rewrites the
+       * address to the real entry point and carries the query string across.
+       * `index.html` then sees the same `?code=&state=` it would have seen with
+       * a server-side rewrite, and `main.jsx` can claim the route.
+       *
+       * Only one deep route exists — `/auth/callback`. Anything else is a
+       * genuinely bad URL, and sending it to the site root is a better outcome
+       * than looping. The base is derived from the path rather than hard-coded,
+       * so this works at a domain root and under a project path
+       * (`/code-lemuria-git-ocean/`) without knowing which it is.
+       */
+      (function () {
+        var path = window.location.pathname.replace(/\/+$/, "");
+        var segs = path.split("/").filter(function (s) {
+          return s.length > 0;
+        });
+
+        // Strip the one route the app owns: `/auth/callback`.
+        if (segs.length >= 2 && segs[segs.length - 1] === "callback" && segs[segs.length - 2] === "auth") {
+          segs = segs.slice(0, -2);
+        } else {
+          // Unknown path: fall back to the site root. On a project page that is
+          // the first segment; at a domain root there are none.
+          segs = segs.length > 1 ? segs.slice(0, 1) : [];
+        }
+
+        var base = "/" + segs.join("/");
+        var target =
+          (base === "/" ? "" : base) +
+          "/" +
+          (window.location.search || "") +
+          (window.location.hash || "");
+
+        // Never redirect to the address we are already on: that is an infinite
+        // loop, and it is the failure mode every hand-rolled 404 fallback hits.
+        if (target === path + (window.location.search || "") + (window.location.hash || "")) return;
+
+        // `replace`, not `assign`: the unknown path is a spent artefact, and
+        // pushing it onto the history stack would make Back return to a URL that
+        // only ever resolves through this same fallback.
+        window.location.replace(target);
+      })();
+    </script>
+  </head>
+  <body>
+    <noscript>
+      <p>Git Ocean needs JavaScript to run the ocean. Enable it and reload.</p>
+    </noscript>
+  </body>
+</html>
