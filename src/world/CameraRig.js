@@ -246,7 +246,7 @@ export class CameraRig {
     // centre rather than at the origin, which is the near edge of the basin.
     // Blended between the two adjacent levels like every other authored value,
     // so the descent from world to country is continuous.
-    let baseFocusZ = (a.focusZ || 0) + ((b.focusZ || 0) - (a.focusZ || 0)) * ease;
+    const baseFocusZ = (a.focusZ || 0) + ((b.focusZ || 0) - (a.focusZ || 0)) * ease;
 
     if (follow && follow.position) {
       // When following a repo, track it in X/Z but keep the level's height so

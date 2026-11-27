@@ -1,0 +1,62 @@
+# The test gate.
+#
+# `deploy-pages.yml` is deliberately manual, and the comment there explains why:
+# the visual work churns and a deploy per commit would publish broken states.
+# That reasoning is about *publishing*, not about verifying, and the two got
+# conflated — so until now nothing in CI ran the test suite at all. A change
+# could break a hundred assertions and the only signal was a human noticing.
+#
+# This workflow is the missing half. It runs on every push and every pull
+# request, does not touch Pages, and does not need any secrets: the suite is
+# Node-only and the live-data tests install their own fixtures.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Cancel superseded runs: a push to a branch makes its older run irrelevant,
+  # and a cancelled test run has no side effects (unlike a cancelled deploy).
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test and build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      # `npm ci`, not `npm install`: it installs exactly the lockfile and fails
+      # loudly when `package.json` and the lockfile disagree. That mismatch is
+      # how the undeclared `vitest` dependency stayed invisible — a local
+      # `npm install` would have resolved it from somewhere and said nothing.
+      - name: Install dependencies
+        run: npm ci
+
+      # Lint before tests: it is seconds, and it catches classes of defect the
+      # suite cannot — an undefined reference on a branch no test exercises, a
+      # hook called after an early return.
+      - name: Lint
+        run: npm run lint
+
+      - name: Run tests
+        run: npm test
+
+      # The deploy workflow builds too, but a build break should be reported on
+      # the pull request that caused it, not discovered at publish time.
+      - name: Build
+        run: npm run build

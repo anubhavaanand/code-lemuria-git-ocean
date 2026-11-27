@@ -18,7 +18,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OceanWorld } from "./world/OceanWorld";
-import { loadProfile } from "./services/profile";
+import { loadProfile, loadOne } from "./services/profile";
 import { FrameProfiler } from "./world/perf";
 import { ZOOM_LEVELS } from "./world/constants";
 import HUD from "./ui/HUD";

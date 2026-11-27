@@ -18,6 +18,29 @@ import { WhaleSong, resolveSong } from "../world/LanguageSong";
 /* Small pieces                                                        */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Language colours, mirrored here rather than imported from the 3D module.
+ *
+ * Importing `constants.js` into the HUD would pull Three.js into the React
+ * bundle for one lookup table. Keep the two in sync by hand; the list is short
+ * and changes about never.
+ */
+const LANGUAGE_COLOR_HEX = {
+  JavaScript: "#f1e05a",
+  TypeScript: "#3178c6",
+  Python: "#3572a5",
+  Rust: "#dea584",
+  Go: "#00add8",
+  Java: "#b07219",
+  "C++": "#f34b7d",
+  C: "#555555",
+  Ruby: "#701516",
+  "C#": "#178600",
+  Kotlin: "#a97bff",
+  Swift: "#f05138",
+  PHP: "#4f5d95",
+};
+
 function Stat({ label, value, hint }) {
   return (
     <div className="go-stat" title={hint}>
@@ -149,25 +172,12 @@ function RepoCard({ repo, onClose, onFocus }) {
   if (!repo) return null;
 
   const sp = repo.whaleSpecies || {};
-  const langColor = useMemo(() => {
-    // Mirror LANGUAGE_COLORS without importing the 3D module into the HUD
-    const map = {
-      JavaScript: "#f1e05a",
-      TypeScript: "#3178c6",
-      Python: "#3572a5",
-      Rust: "#dea584",
-      Go: "#00add8",
-      Java: "#b07219",
-      "C++": "#f34b7d",
-      C: "#555555",
-      Ruby: "#701516",
-      "C#": "#178600",
-      Kotlin: "#a97bff",
-      Swift: "#f05138",
-      PHP: "#4f5d95",
-    };
-    return map[repo.language] || "#8b9bb0";
-  }, [repo.language]);
+  // Not a `useMemo`, deliberately. The map is a constant, so the hook bought
+  // nothing — and it sat *after* the `if (!repo) return null` above, which meant
+  // the hook count changed the moment a card closed and React threw
+  // "Rendered more hooks than during the previous render". Reading a constant
+  // needs no hook and cannot break the hook order.
+  const langColor = LANGUAGE_COLOR_HEX[repo.language] || "#8b9bb0";
 
   const maxStars = 5000;
 
