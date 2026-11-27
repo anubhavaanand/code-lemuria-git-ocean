@@ -24,8 +24,9 @@ one of them was found by measuring pixels rather than by looking at code.
 - **Whales**: one per repository, five species, size from commit history.
   Imported humpback sculpt where licensed; procedural lathe for every other
   species (see the Design Law note in `VISION.md` §2).
-- **Creature clouds**: five trophic groups in real Keplerian orbits, plus the
-  18 benthic Legacy creatures built into the tower bases.
+- **Creature clouds**: five trophic groups in true elliptical orbits (per-group
+  constants from `ORBITAL_PLANES`, not derived from repo health), plus the 18
+  benthic Legacy creatures built into the tower bases.
 - **Sonar obelisk**: silicon wafer marker for capital clusters.
 - **Camera**: continuous five-level zoom rig with pointer look and pinch, and a
   subject-scaled focus that frames the animal rather than the tower.

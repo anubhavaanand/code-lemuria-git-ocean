@@ -61,9 +61,12 @@ Concretely:
 - **Blade count** on a kelp tower is the number of open issues and pull
   requests. A stressed repo grows more blades — more surface area, more drag,
   more to carry.
-- **Orbits are Keplerian**, not random. Trophic level sets the radius. Repo
-  health sets the eccentricity. A failing CI pipeline genuinely warps the
-  trajectory.
+- **Orbits are real ellipses**, not circles with a wobble. `ORBITAL_PLANES`
+  gives each trophic group its own radius, inclination and eccentricity, and
+  `CreatureGeometry` solves a true-anomaly ellipse from them. Each group's orbit
+  is a fixed property of that group, **not** of a repository's health — a
+  failing pipeline does not widen it. CI state is read elsewhere: it lights tube
+  worms at the tower base.
 - **Bioluminescence is data.** Glow intensity is recent activity. Colour is
   language. A dead repo does not glow.
 
@@ -74,20 +77,28 @@ because it *means* something, and the meaning survives being explained.
 
 ## 🐋 The Creature Map
 
-The full system maps **71 GitHub data points** onto creatures across **7 trophic
-levels**. There is no arbitrary placement — each mapping is a real
-ecological relationship.
+**Five** orbital groups, plus eighteen sessile Legacy creatures on the tower
+base. There is no arbitrary placement — each mapping is a real ecological
+relationship. (An earlier version of this section claimed "71 data points across
+7 trophic levels"; neither number was ever true of the build — see
+[`docs/VISION.md` §9](docs/VISION.md).)
 
 | GitHub entity | Marine form | Why this mapping is honest |
 | :--- | :--- | :--- |
-| **Repository** | **Apex Whale** | An apex animal. Body length = codebase size, dorsal colour = primary language, flippers = open PRs, flukes = forks, scars = age, remoras = watchers. |
-| **Commit history** | **Giant Kelp Tower** | Height = total commits, blade density = contributors, sway = recent activity, age rings = repo age, canopy glow = star count. |
-| **Contributors** | **Builders** — reef fish | Orbit tightest (trophic 4–5). Pod size = human contributors. |
-| **Stars / watchers** | **Admirers** — drifters | Wide, slow outer orbit. Bioluminescent. Passive by nature. |
-| **Open issues / PRs** | **Problems** — mesopredators | Erratic elliptical orbits. Count drives the swarm size. |
-| **Closed issues / merged PRs** | **Resolutions** | Inner, calmer orbit. The work that got finished. |
-| **Forks** | **Offspring** | Slow outer drift. Forks are descendants; they spread. |
-| **README, wiki, templates** | **Legacy** — coral, anemone, urchins | Benthic features on the tower base. Structural, not mobile. |
+| **Repository** | **Apex Whale** | An apex animal. Body length = commit count (keeps the animal proportionate to the tower it circles), dorsal colour = primary language, flippers = open PRs, flukes = forks, scars = age, remoras = watchers. |
+| **Commit history** | **Giant Kelp Tower** | Height = total commits, girth = contributors, sway = recent activity, age rings = repo age, canopy glow = star count. |
+| **Contributors** | **Builders** — reef fish | Innermost, tightest, near-circular orbit. Pod size = human contributors. |
+| **Closed issues / merged PRs** | **Resolutions** | Inner, calm, slightly inclined. The work that got finished. |
+| **Open issues / PRs** | **Problems** — mesopredators | Widest, steepest-informed, most eccentric orbit. Count drives the swarm size. |
+| **Forks** | **Offspring** | Slow, wide trailing ellipse. Descendants that spread. |
+| **Stars / watchers** | **Admirers** — drifters | Outermost, slowest, near-horizontal drift. Bioluminescent. Passive by nature. |
+| **README, wiki, templates** | **Legacy** — coral, anemone, urchins | Eighteen benthic creatures, one per repository attribute, each built only when that attribute is present. Structural, not mobile. |
+
+> Orbit radius, speed, inclination and eccentricity are **constants per group**
+> (`ORBITAL_PLANES`), not derived from a repository's health. The "Keplerian"
+> claim below is half true: the paths are true ellipses, but a repo's CI state
+> drives the tube worms at the tower base, not the orbit. See
+> [`docs/VISION.md` §9](docs/VISION.md).
 
 Five whale species are recognised, each with a real scientific name and a real
 build:
@@ -203,8 +214,8 @@ What works today:
 - Procedural kelp towers driven by repository metrics.
 - Procedural whales with five species, correct body plans, and identity features
   derived from data.
-- Keplerian orbital creature clouds for five trophic groups.
-- **Nineteen Legacy creatures** on every named tower — one per repository
+- Elliptical orbital creature clouds for five trophic groups.
+- **Eighteen Legacy creatures** on every named tower — one per repository
   attribute, each growing or swimming where that attribute says it should. Brain
   coral from README quality, a basking-shark shadow from README length, tube
   worms from CI status, an anglerfish whose lure lights the water from security
